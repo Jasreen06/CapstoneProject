@@ -1,0 +1,37 @@
+# ── Secrets (NEVER commit) ────────────────────────────────────
+.env
+*.env
+.env.*
+
+# ── Python virtual environment (packages, not source) ─────────
+venv2/Lib/
+venv2/Scripts/
+venv2/Include/
+venv2/pyvenv.cfg
+venv2/share/
+
+# ── Python cache ──────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# ── Large data files ──────────────────────────────────────────
+*.csv
+*.parquet
+*.pkl
+*.h5
+model_comparison_results.json
+
+# ── Frontend build artifacts ──────────────────────────────────
+venv2/frontend/node_modules/
+venv2/frontend/dist/
+venv2/frontend/.vite/
+
+# ── OS / IDE ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
