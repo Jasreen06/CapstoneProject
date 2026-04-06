@@ -1,0 +1,17 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+pandas>=2.2.0
+numpy>=1.26.0
+prophet>=1.1.5
+statsmodels>=0.14.0
+xgboost>=2.0.0
+scikit-learn>=1.4.0
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-groq>=0.1.9
+groq>=0.9.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+websockets>=12.0
+sse-starlette>=1.8.0
