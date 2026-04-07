@@ -100,6 +100,8 @@ INFO:     Uvicorn running on http://0.0.0.0:8004
 INFO:     Started reloader process
 ```
 
+> **First run on a new machine:** The backend will automatically detect that the data files (`portwatch_us_data.csv`, `chokepoint_data.csv`) are missing and download them from the IMF PortWatch API. This one-time download takes **2-5 minutes** (~42MB). Subsequent startups skip this step and load instantly.
+
 ### Terminal 2 — AIS Backend (port 8001)
 
 ```bash
@@ -215,8 +217,13 @@ taskkill /PID <pid> /F
 
 ### Backend starts but endpoints return errors
 - Make sure `.env` exists at `venv2/backend/.env` with valid API keys
-- Make sure `portwatch_us_data.csv` and `chokepoint_data.csv` exist in `venv2/backend/`
-- If CSV files are missing, run `python data_pull.py` first
+- The backend auto-downloads CSV data files on first startup — if this fails (e.g., no internet), you can manually run: `python data_pull.py`
+- Check the backend terminal for "Port data pull complete" / "Chokepoint data pull complete" messages on first run
+
+### All port congestion scores show 50 (MEDIUM)
+- This means the data files haven't been downloaded yet — the backend auto-pulls them on first startup, which takes 2-5 minutes
+- Wait for the backend to finish downloading, then refresh the dashboard
+- If the auto-pull failed, run `python data_pull.py` manually from `venv2/backend/`
 
 ### Live Vessels tab shows 0 vessels
 - Confirm the AIS backend is running on port 8001 (`curl http://localhost:8001/health`)

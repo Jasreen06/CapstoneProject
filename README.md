@@ -696,6 +696,8 @@ Double-click `start.bat` from the project root. It:
 3. Starts the backend: `venv2/Scripts/python.exe -m uvicorn api:app --port 8004`
 4. Starts the frontend: `npm run dev` in `venv2/frontend`
 
+> **First run on a new machine:** The backend will automatically detect missing data files (`portwatch_us_data.csv`, `chokepoint_data.csv`) and download them from the IMF PortWatch API. This one-time download takes **2-5 minutes** (~42MB). Subsequent startups load instantly from the cached CSV files.
+
 ### Option B: Manual (if start.bat fails)
 
 **Step 1 — Kill stuck processes (run as Administrator):**
