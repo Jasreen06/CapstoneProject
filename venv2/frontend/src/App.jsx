@@ -11,6 +11,7 @@ import {
   Calendar, Navigation, Zap, Info, MessageSquare, Send, RotateCcw,
 } from "lucide-react";
 import { usePortList, useOverview, useForecast, useTopPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat } from "./hooks/useApi";
+import VesselMap from "./VesselMap";
 
 /* ─────────────────────────────────────────────────────────
    DESIGN TOKENS
@@ -1622,7 +1623,7 @@ function RiskAssessmentCard({ port }) {
 export default function App() {
   const [port,  setPort]  = useState("");
   const [model, setModel] = useState("Prophet");
-  const [tab,   setTab]   = useState("ports"); // "ports" | "chokepoints" | "advisor"
+  const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "chokepoints" | "advisor"
 
   const { data: portData }                    = usePortList();
   const { data: overview, loading: ovLoad }   = useOverview(port);
@@ -1735,7 +1736,7 @@ export default function App() {
             {/* Tab switcher */}
             <div style={{ display:"flex", alignItems:"center", gap:4,
               background:T.navy3, borderRadius:8, padding:3, border:`1px solid ${T.border}` }}>
-              {[["ports","Port Intelligence"],["chokepoints","Chokepoints"],["advisor","AI Advisor"]].map(([key, label]) => (
+              {[["ports","Port Intelligence"],["vessels","Live Vessels"],["chokepoints","Chokepoints"],["advisor","AI Advisor"]].map(([key, label]) => (
                 <button key={key} onClick={() => setTab(key)} style={{
                   padding:"0.3rem 0.85rem", borderRadius:6, border:"none", cursor:"pointer",
                   background: tab === key ? T.teal : "transparent",
@@ -1774,7 +1775,11 @@ export default function App() {
           </div>
 
           {/* Content */}
-          {tab === "advisor" ? (
+          {tab === "vessels" ? (
+            <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
+              <VesselMap />
+            </div>
+          ) : tab === "advisor" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
               <AiAdvisor port={port} />
             </div>

@@ -44,6 +44,7 @@
 │                        DATA SOURCES                             │
 │  ArcGIS PortWatch (US Ports)   ArcGIS PortWatch (Chokepoints)  │
 │  OpenWeatherMap API             Groq API (LLaMA-3.3-70B)       │
+│  aisstream.io (Live AIS)                                        │
 └───────────────┬────────────────────────────┬────────────────────┘
                 │                            │
                 ▼                            ▼
@@ -55,9 +56,13 @@
 │  forecasting.py    → ARIMA / Prophet / XGBoost models            │
 │  weather.py        → OpenWeatherMap fetch + risk scoring          │
 │  llm.py            → LangChain + Groq AI workflow                │
-│  api.py            → FastAPI REST endpoints                       │
+│  api.py            → FastAPI REST endpoints (port 8004)           │
+│                                                                  │
+│  AIS/ais_consumer.py → Live WebSocket feed from aisstream.io     │
+│  AIS/ais_store.py    → In-memory vessel store (keyed by MMSI)    │
+│  AIS/ais_api.py      → FastAPI REST + SSE endpoints (port 8001)  │
 └───────────────────────────┬──────────────────────────────────────┘
-                            │  HTTP / JSON
+                            │  HTTP / JSON / SSE
                             ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                   FRONTEND (React + Vite)                         │
@@ -66,15 +71,19 @@
 │    CongestionHero, 7-Day Outlook, Trend Timeline,                │
 │    WeatherCard, VesselMix, SupplyChainRiskCard                   │
 │                                                                  │
-│  Tab 2: Chokepoints                                              │
+│  Tab 2: Live Vessels                                             │
+│    VesselMap (Leaflet) — real-time AIS positions, port congestion │
+│                                                                  │
+│  Tab 3: Chokepoints                                              │
 │    ChokepointList, ChokepointDetailPanel                         │
 │                                                                  │
-│  Tab 3: AI Advisor                                               │
+│  Tab 4: AI Advisor                                               │
 │    Chat interface (Groq LLaMA-3.3-70B)                          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
 **Server:** FastAPI served by Uvicorn on port **8004**
+**AIS Server:** Standalone FastAPI on port **8001** (live vessel streaming)
 **Frontend:** React (Vite) on port **5173**
 **State:** In-memory cache (DataFrames loaded once per server restart)
 
@@ -114,6 +123,13 @@
 - **Model:** `llama-3.3-70b-versatile`
 - **API Key:** `GROQ_API_KEY` in `.env`
 - **Framework:** LangChain LCEL (LangChain Expression Language)
+
+### 3.5 aisstream.io (Live AIS)
+- **URL:** `wss://stream.aisstream.io/v0/stream` (WebSocket)
+- **Coverage:** US waters — 5 bounding boxes (West Coast, Gulf Coast, East Coast, Hawaii, Alaska)
+- **Message types:** `PositionReport` (Class A), `StandardClassBPositionReport` (Class B), `ShipStaticData`
+- **Key fields:** MMSI, lat/lon, speed over ground (SOG), course over ground (COG), heading, navigational status, vessel name, type, destination, ETA, IMO, call sign
+- **API Key:** `AISSTREAM_API_KEY` in `.env`
 
 ---
 
@@ -454,6 +470,15 @@ All endpoints run on `http://localhost:8004`.
 | POST | `/api/chat` | AI Advisor (LangChain + Groq) |
 | GET | `/health` | Health check |
 
+### AIS Endpoints (port 8001)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/vessels/stream` | SSE stream — pushes all vessel positions every 5 seconds |
+| GET | `/api/vessels` | JSON snapshot of all live vessels with valid lat/lon |
+| GET | `/api/vessels/stats` | Summary: total count, breakdown by vessel type and nav status |
+| GET | `/health` | Health check |
+
 ### `/api/overview` Response Structure
 ```json
 {
@@ -496,7 +521,7 @@ All endpoints run on `http://localhost:8004`.
 
 ## 10. Frontend Dashboard
 
-Built with React + Vite. Uses Recharts for all visualizations.
+Built with React + Vite. Uses Recharts for charts and Leaflet for the vessel map.
 
 ### Tab 1: Port Intelligence
 
@@ -512,14 +537,30 @@ Built with React + Vite. Uses Recharts for all visualizations.
 | **AlternativePorts** | Nearby lower-congestion ports |
 | **SupplyChainRiskCard** | 4 upstream chokepoints with disruption score bars |
 
-### Tab 2: Chokepoints
+### Tab 2: Live Vessels
+
+| Component | What it shows |
+|-----------|---------------|
+| **VesselMap** (Leaflet) | Interactive map of real-time AIS vessel positions in US waters |
+| **PortDropdown** | Searchable dropdown of 55 US ports (★ = major port); selects to zoom-to-port |
+| **Vessel filters** | Filter by vessel type (Cargo, Tanker, Passenger, etc.) and navigational status |
+| **Port congestion circles** | Color-coded circles per port (red/amber/green by congestion score) with sonar pulse animation for HIGH congestion ports |
+| **VesselPanel** | Side panel with selected vessel details (MMSI, type, speed, course, destination) |
+| **Stats overlay** | Live vessel count + SSE connection status |
+| **Legend** | Vessel type colors, nav status colors, port congestion color scale |
+
+- **Data:** SSE stream from AIS backend (port 8001), port congestion from main API (port 8004)
+- **Map tiles:** CartoDB Dark (`dark_all`), locked to North America (`maxBounds`)
+- **Rendering:** `preferCanvas={true}` for fast rendering of ~4,000+ simultaneous vessel markers
+
+### Tab 3: Chokepoints
 
 | Component | What it shows |
 |-----------|---------------|
 | **ChokepointList** | All chokepoints ranked by disruption score |
 | **ChokepointDetailPanel** | 90-day transit history chart + vessel mix + KPIs for selected chokepoint |
 
-### Tab 3: AI Advisor
+### Tab 4: AI Advisor
 
 - Chat interface with suggested starter questions
 - Powered by `/api/chat`
@@ -572,13 +613,19 @@ Dockwise_AI/
     │   ├── metrics.py                 ← MAE, RMSE, MAPE, SMAPE, coverage
     │   ├── weather.py                 ← OpenWeatherMap fetch + risk scoring
     │   ├── llm.py                     ← LangChain + Groq AI workflow
-    │   ├── api.py                     ← FastAPI REST server
+    │   ├── api.py                     ← FastAPI REST server (port 8004)
     │   ├── portwatch_us_data.csv      ← US port data (incremental)
-    │   └── chokepoint_data.csv        ← Global chokepoint data (incremental)
+    │   ├── chokepoint_data.csv        ← Global chokepoint data (incremental)
+    │   └── AIS/
+    │       ├── __init__.py            ← Package init
+    │       ├── ais_consumer.py        ← WebSocket consumer for aisstream.io
+    │       ├── ais_store.py           ← In-memory vessel store (singleton, keyed by MMSI)
+    │       └── ais_api.py             ← FastAPI REST + SSE server (port 8001)
     │
     └── frontend/
         ├── src/
-        │   ├── App.jsx                ← Main app + tab switcher
+        │   ├── App.jsx                ← Main app + tab switcher (4 tabs)
+        │   ├── VesselMap.jsx          ← Live Vessels map (Leaflet + AIS SSE)
         │   ├── hooks/
         │   │   └── useApi.js          ← All API hooks (BASE = http://localhost:8004)
         │   └── components/
@@ -611,12 +658,14 @@ requests
 python-dotenv
 langchain-groq
 langchain-core
+websockets
 ```
 
 ### Environment Variables (`.env`)
 ```
 WEATHER_API_KEY=your_openweathermap_api_key
 GROQ_API_KEY=your_groq_api_key
+AISSTREAM_API_KEY=your_aisstream_api_key
 ```
 
 ### Critical: `load_dotenv()` placement
@@ -661,13 +710,19 @@ cd venv2/backend
 ../Scripts/python.exe -m uvicorn api:app --port 8004 --reload
 ```
 
-**Step 3 — Start frontend (separate terminal):**
+**Step 3 — Start AIS backend (separate terminal):**
+```
+cd venv2/backend
+../Scripts/python.exe -m uvicorn AIS.ais_api:app --port 8001
+```
+
+**Step 4 — Start frontend (separate terminal):**
 ```
 cd venv2/frontend
 npm run dev
 ```
 
-**Step 4 — Update data (optional, run separately):**
+**Step 5 — Update data (optional, run separately):**
 ```
 cd venv2/backend
 ../Scripts/python.exe data_pull.py
@@ -676,6 +731,7 @@ cd venv2/backend
 ### Accessing the Dashboard
 - Frontend: `http://localhost:5173`
 - API docs (Swagger): `http://localhost:8004/docs`
+- AIS API docs (Swagger): `http://localhost:8001/docs`
 
 ---
 

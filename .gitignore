@@ -26,6 +26,7 @@ model_comparison_results.json
 
 # ── Frontend build artifacts ──────────────────────────────────
 venv2/frontend/node_modules/
+venv2/frontend/build/
 venv2/frontend/dist/
 venv2/frontend/.vite/
 
