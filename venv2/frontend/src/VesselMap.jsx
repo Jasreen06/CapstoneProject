@@ -203,8 +203,9 @@ function usePortCongestion() {
       try {
         const res = await fetch(`${API_BASE}/api/top-ports?top_n=120`);
         const data = await res.json();
+        console.log("[usePortCongestion] fetched", data.ports?.length, "ports, sample:", data.ports?.[0]);
         if (mounted) setPorts(data.ports || []);
-      } catch {}
+      } catch (e) { console.error("[usePortCongestion] fetch failed:", e); }
     }
     load();
     const interval = setInterval(load, 60000);

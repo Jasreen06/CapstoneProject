@@ -768,7 +768,8 @@ def risk_assessment(port: str = Query(..., description="Port name")):
     Agents:
       1. WeatherDisruptionAgent  — scores operational weather risk
       2. PortCongestionAgent     — scores current congestion signals
-      3. RiskOrchestrator        — combines signals → risk_score + explanation
+      3. VesselArrivalAgent      — live AIS-based 72h arrival pressure
+      4. RiskOrchestrator        — combines signals → risk_score + explanation
 
     Returns combined risk score (0–1), tier (LOW/MEDIUM/HIGH),
     LLM explanation, and raw agent signals.
@@ -803,6 +804,16 @@ def risk_assessment(port: str = Query(..., description="Port name")):
                 "trend":             result["trend_direction"],
                 "seasonal_context":  result["seasonal_context"],
                 "prophet_expected":  result["prophet_expected"],
+            },
+            "vessel": {
+                "vessel_count":       result.get("vessel_count", 0),
+                "vessel_delay_score": result.get("vessel_delay_score", 0.0),
+                "mega_vessel_flag":   result.get("mega_vessel_flag", False),
+                "anchor_count":       result.get("anchor_count", 0),
+                "moored_count":       result.get("moored_count", 0),
+                "incoming_72h":       result.get("incoming_72h", 0),
+                "queue_pressure":     result.get("queue_pressure", 0.0),
+                "mega_vessel_count":  result.get("mega_vessel_count", 0),
             },
         },
     }
