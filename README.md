@@ -12,14 +12,15 @@
 5. [Scoring Methodology](#5-scoring-methodology)
 6. [Forecasting Models](#6-forecasting-models)
 7. [Weather Integration](#7-weather-integration)
-8. [LLM AI Advisor](#8-llm-ai-advisor)
-9. [API Endpoints](#9-api-endpoints)
-10. [Frontend Dashboard](#10-frontend-dashboard)
-11. [Port-to-Chokepoint Mapping](#11-port-to-chokepoint-mapping)
-12. [File Structure](#12-file-structure)
-13. [Environment Setup](#13-environment-setup)
-14. [How to Run](#14-how-to-run)
-15. [Known Issues & Workarounds](#15-known-issues--workarounds)
+8. [Multi-Agent Risk Assessment Pipeline](#8-multi-agent-risk-assessment-pipeline)
+9. [LLM AI Advisor](#9-llm-ai-advisor)
+10. [API Endpoints](#10-api-endpoints)
+11. [Frontend Dashboard](#11-frontend-dashboard)
+12. [Port-to-Chokepoint Mapping](#12-port-to-chokepoint-mapping)
+13. [File Structure](#13-file-structure)
+14. [Environment Setup](#14-environment-setup)
+15. [How to Run](#15-how-to-run)
+16. [Known Issues & Workarounds](#16-known-issues--workarounds)
 
 ---
 
@@ -31,6 +32,8 @@
 - Statistical forecasting models (ARIMA, Prophet, XGBoost)
 - Global chokepoint disruption monitoring
 - Weather-based operational risk scoring
+- **Live AIS vessel tracking** via aisstream.io — real-time anchor/moored/incoming vessel classification
+- **Multi-agent risk assessment pipeline** (LangGraph) — Weather Agent + Congestion Agent + Vessel Agent → Risk Orchestrator
 - An AI advisor powered by Groq (LLaMA-3.3-70B) + LangChain
 
 **Target users:** Logistics managers, port operators, supply chain analysts who need to monitor US port congestion, anticipate disruptions 14–28 days in advance, and get actionable recommendations.
@@ -51,12 +54,19 @@
 ┌──────────────────────────────────────────────────────────────────┐
 │                    BACKEND (FastAPI + Python)                     │
 │                                                                  │
-│  data_pull.py      → Incremental CSV download from ArcGIS        │
-│  data_cleaning.py  → Normalisation, dedup, z-score scoring       │
-│  forecasting.py    → ARIMA / Prophet / XGBoost models            │
-│  weather.py        → OpenWeatherMap fetch + risk scoring          │
-│  llm.py            → LangChain + Groq AI workflow                │
-│  api.py            → FastAPI REST endpoints (port 8004)           │
+│  data_pull.py        → Incremental CSV download from ArcGIS      │
+│  data_cleaning.py    → Normalisation, dedup, z-score scoring     │
+│  forecasting.py      → ARIMA / Prophet / XGBoost models          │
+│  weather.py          → OpenWeatherMap fetch + risk scoring        │
+│  llm.py              → LangChain + Groq AI workflow              │
+│  api.py              → FastAPI REST endpoints (port 8004)         │
+│                                                                  │
+│  ┌── Multi-Agent Risk Pipeline (LangGraph) ───────────────────┐  │
+│  │  congestion_agent.py → Prophet baseline + z-score scoring  │  │
+│  │  weather.py          → Weather disruption scoring          │  │
+│  │  vessel_agent.py     → Live AIS classification + delay     │  │
+│  │  agents.py           → Risk orchestrator (weighted blend)  │  │
+│  └────────────────────────────────────────────────────────────┘  │
 │                                                                  │
 │  AIS/ais_consumer.py → Live WebSocket feed from aisstream.io     │
 │  AIS/ais_store.py    → In-memory vessel store (keyed by MMSI)    │
@@ -363,7 +373,108 @@ Port operational risk is scored based on four thresholds:
 
 ---
 
-## 8. LLM AI Advisor
+## 8. Multi-Agent Risk Assessment Pipeline
+
+### 8.1 Architecture
+
+The risk assessment uses a **LangGraph state-graph pipeline** where three independent agents each analyze a different signal, and a fourth orchestrator node blends them into a final score.
+
+```
+                    ┌─────────────────┐
+                    │  Initial State  │
+                    │  (port name)    │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+     ┌────────────┐  ┌────────────┐  ┌────────────┐
+     │  Weather   │  │ Congestion │  │  Vessel    │
+     │  Agent     │  │  Agent     │  │  Agent     │
+     │ (live API) │  │ (Prophet)  │  │ (live AIS) │
+     └─────┬──────┘  └─────┬──────┘  └─────┬──────┘
+           │               │               │
+           └───────────────┼───────────────┘
+                           ▼
+                  ┌─────────────────┐
+                  │ Risk Orchestrator│
+                  │ (weighted blend) │
+                  └────────┬────────┘
+                           ▼
+              risk_score, risk_tier, explanation
+```
+
+### 8.2 Agent Details
+
+**Weather Agent (`weather.py`):**
+- Source: OpenWeatherMap API (real-time)
+- Outputs: `disruption_score` (0–1), `risk_level` (LOW/MEDIUM/HIGH), `summary`, `active_warnings`
+
+**Congestion Agent (`congestion_agent.py`):**
+- Source: PortWatch CSV (historical, ~3–5 day lag)
+- Method: Prophet seasonal baseline → z-score of current portcalls vs Prophet expected value
+- Outputs: `congestion_score` (0–100), `congestion_ratio`, `trend_direction`, `seasonal_context`, `prophet_expected`
+- Prophet config: yearly + weekly seasonality, multiplicative mode, changepoint_prior_scale=0.05
+
+**Vessel Agent (`vessel_agent.py`):**
+- Source: Live AIS microservice on port 8001 (real-time)
+- Classifies each vessel as:
+  - **Moored** — nav_status = "Moored" AND within moored radius (default 5nm)
+  - **At Anchor** — nav_status = "At Anchor" AND within anchor radius (default 15nm)
+  - **Incoming ≤72h** — destination fuzzy-matches port AND distance/SOG ≤ 72 hours
+- Per-port coordinate overrides for ship-channel ports (e.g., South Louisiana uses 60nm anchor radius)
+- Mega-vessel detection: draught ≥ 12m at qualifying ports
+- Outputs: `vessel_delay_score` (0–1), `vessel_count`, `anchor_count`, `moored_count`, `incoming_72h`, `queue_pressure`, `mega_vessel_flag`, `mega_vessel_count`
+
+**Delay Score formula:**
+```
+delay_score = 0.60 × queue_contribution    (anchor/berth ratio)
+            + 0.40 × surge_contribution    (inbound vs historical median)
+            + 0.15 × backlog_bonus         (absolute queue size)
+            capped at 1.0
+```
+
+**Queue Pressure:**
+```
+queue_pressure = anchor_count / (moored_count + 1)
+```
+
+### 8.3 Risk Orchestrator (`agents.py`)
+
+Blends all three agents into a final risk score:
+
+```
+risk_score = 0.40 × congestion_normalized
+           + 0.25 × vessel_delay_score
+           + 0.35 × weather_disruption_score
+           + 0.05 × mega_vessel_bonus       (if mega_vessel_flag is True)
+           capped at 1.0
+```
+
+**Risk tiers:**
+
+| Score Range | Tier |
+|---|---|
+| ≥ 0.67 | HIGH |
+| ≥ 0.33 | MEDIUM |
+| < 0.33 | LOW |
+
+The orchestrator also generates a natural-language explanation via Groq (LLaMA-3.3-70B) incorporating all agent signals: weather conditions, congestion trend, anchor/moored/incoming counts, and queue pressure.
+
+### 8.4 Data Freshness
+
+The pipeline operates on **two different time clocks**:
+
+| Signal | Source | Freshness |
+|---|---|---|
+| Weather | OpenWeatherMap API | Real-time |
+| Vessel (AIS) | aisstream.io WebSocket | Real-time |
+| Congestion | PortWatch CSV | ~3–5 day lag (intrinsic to source) |
+
+The UI transparently labels each data point with its actual date and shows a color-coded "Data freshness" indicator (green = current, amber = 3–7 day lag, red = >7 day lag).
+
+---
+
+## 9. LLM AI Advisor
 
 ### 8.1 Architecture
 
@@ -451,7 +562,7 @@ ChatGroq(
 
 ---
 
-## 9. API Endpoints
+## 10. API Endpoints
 
 All endpoints run on `http://localhost:8004`.
 
@@ -467,6 +578,7 @@ All endpoints run on `http://localhost:8004`.
 | GET | `/api/chokepoints` | All chokepoints with current disruption scores |
 | GET | `/api/chokepoints/overview?name=X` | Detailed stats for one chokepoint |
 | GET | `/api/weather?port=X` | Current weather + 5-day forecast + risk score |
+| GET | `/api/risk-assessment?port=X` | Multi-agent risk score (weather + congestion + vessel) |
 | POST | `/api/chat` | AI Advisor (LangChain + Groq) |
 | GET | `/health` | Health check |
 
@@ -517,9 +629,42 @@ All endpoints run on `http://localhost:8004`.
 }
 ```
 
+### `/api/risk-assessment` Response Structure
+```json
+{
+  "risk_score": 0.42,
+  "risk_tier": "MEDIUM",
+  "explanation": "Moderate risk driven by...",
+  "signals": {
+    "weather": {
+      "disruption_score": 0.1,
+      "risk_level": "LOW",
+      "summary": "Clear skies, calm winds",
+      "active_warnings": []
+    },
+    "congestion": {
+      "score": 58.3,
+      "ratio": 1.12,
+      "trend": "rising",
+      "seasonal_context": "Off-peak period"
+    },
+    "vessel": {
+      "vessel_count": 31,
+      "vessel_delay_score": 0.32,
+      "mega_vessel_flag": true,
+      "anchor_count": 22,
+      "moored_count": 50,
+      "incoming_72h": 9,
+      "queue_pressure": 0.43,
+      "mega_vessel_count": 1
+    }
+  }
+}
+```
+
 ---
 
-## 10. Frontend Dashboard
+## 11. Frontend Dashboard
 
 Built with React + Vite. Uses Recharts for charts and Leaflet for the vessel map.
 
@@ -529,10 +674,11 @@ Built with React + Vite. Uses Recharts for charts and Leaflet for the vessel map
 |-----------|---------------|
 | **Port selector** (left sidebar) | All ports ranked by congestion score; color-coded LOW/MEDIUM/HIGH |
 | **Model selector** | ARIMA / Prophet / XGBoost toggle |
-| **CongestionHero** | Large score gauge, trend direction, % vs normal, last data date |
+| **CongestionHero** | Score gauge, trend (last 7d in data), % vs normal, data freshness indicator with color-coded lag (green/amber/red). Labels show actual data date ("Ships on 2026-04-03") instead of misleading "Ships yesterday" |
 | **7-Day Outlook** | Forecast score for each of the next 7 days |
 | **Timeline + Insights** | 90-day historical congestion chart + 7-day forecast overlay |
 | **WeatherCard** | Current conditions grid + 5-day forecast strip + risk banner |
+| **RiskAssessmentCard** | Multi-agent risk score (0–100) with 3 agent panels side-by-side: **Weather Agent** (disruption score, risk level, warnings), **Congestion Agent** (score vs baseline, trend, seasonal context), **Vessel Agent** (delay score, anchor/moored/incoming counts, queue pressure, mega-vessel badge) |
 | **VesselMix** | Monthly vessel type breakdown (stacked bar) |
 | **AlternativePorts** | Nearby lower-congestion ports |
 | **SupplyChainRiskCard** | 4 upstream chokepoints with disruption score bars |
@@ -577,7 +723,7 @@ Built with React + Vite. Uses Recharts for charts and Leaflet for the vessel map
 
 ---
 
-## 11. Port-to-Chokepoint Mapping
+## 12. Port-to-Chokepoint Mapping
 
 Each US port is mapped to 4 relevant upstream chokepoints based on its geographic region and typical trade routes:
 
@@ -596,7 +742,7 @@ Each US port is mapped to 4 relevant upstream chokepoints based on its geographi
 
 ---
 
-## 12. File Structure
+## 13. File Structure
 
 ```
 Dockwise_AI/
@@ -612,6 +758,10 @@ Dockwise_AI/
     │   ├── forecasting.py             ← ARIMA, Prophet, XGBoost models
     │   ├── metrics.py                 ← MAE, RMSE, MAPE, SMAPE, coverage
     │   ├── weather.py                 ← OpenWeatherMap fetch + risk scoring
+    │   ├── congestion_agent.py        ← Prophet baseline + z-score congestion scoring
+    │   ├── vessel_agent.py            ← Live AIS vessel classification + delay scoring
+    │   ├── agents.py                  ← LangGraph risk pipeline + orchestrator
+    │   ├── model_comparison.py        ← Walk-forward CV across all 3 models
     │   ├── llm.py                     ← LangChain + Groq AI workflow
     │   ├── api.py                     ← FastAPI REST server (port 8004)
     │   ├── portwatch_us_data.csv      ← US port data (incremental)
@@ -641,7 +791,7 @@ Dockwise_AI/
 
 ---
 
-## 13. Environment Setup
+## 14. Environment Setup
 
 ### Python Dependencies (`requirements.txt`)
 ```
@@ -687,7 +837,7 @@ def _api_key() -> str:
 
 ---
 
-## 14. How to Run
+## 15. How to Run
 
 ### Option A: `start.bat` (recommended)
 Double-click `start.bat` from the project root. It:
@@ -737,7 +887,7 @@ cd venv2/backend
 
 ---
 
-## 15. Known Issues & Workarounds
+## 16. Known Issues & Workarounds
 
 ### Issue 1: Port 8004 stuck with old server
 **Symptom:** API returns old responses; new endpoints show 404.
@@ -766,6 +916,24 @@ taskkill /IM python.exe /F
 ### Issue 6: Port 8000 permanently occupied
 **History:** Earlier development used port 8000. An unkillable process took hold permanently.
 **Workaround:** Moved all development to port **8004**. Frontend `BASE_URL` updated accordingly.
+
+### Issue 7: PortWatch data lag (3–12 days)
+**Symptom:** Congestion scores reflect a date 3–12 days in the past, not today.
+**Cause:** IMF PortWatch has an intrinsic 3–5 day processing lag. If `data_pull.py` hasn't been run recently, the lag compounds further.
+**Mitigation:**
+- Run `python data_pull.py` daily (or set up a cron job) to minimize self-inflicted lag
+- UI now transparently labels all PortWatch-derived numbers with their actual date and a color-coded "Data freshness" indicator
+- Live AIS signals (vessel agent) provide real-time context alongside the stale congestion data
+
+### Issue 8: AIS coverage gaps for inland/river ports
+**Symptom:** Vessel agent shows 0 vessels for ports like New Orleans, Mobile, Jacksonville, Corpus Christi.
+**Cause:** AISStream's satellite/coastal AIS feed doesn't reach inland river ports (Mississippi system, St. Johns River, Mobile Bay). These ports have vessel traffic, but AISStream cannot see it.
+**Workaround:** The vessel agent falls back to historical median portcall data for ports with no AIS coverage. The delay score for these ports is based on historical patterns rather than live data.
+
+### Issue 9: Frontend proxy and API base URL mismatch
+**Symptom:** Ports not appearing in UI; VesselMap showing fixed congestion of 50 for all ports.
+**Cause:** `package.json` proxy and `VesselMap.jsx` API_BASE were pointing to port 8000 instead of 8004.
+**Fix:** Updated proxy to `http://localhost:8004` in `package.json` and `API_BASE` in `VesselMap.jsx`.
 
 ---
 
@@ -796,4 +964,4 @@ Example 3 — LOW congestion:
 
 ---
 
-*DockWise AI v1.0 | March 2026*
+*DockWise AI v2.0 | April 2026*
