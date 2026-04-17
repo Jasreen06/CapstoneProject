@@ -82,9 +82,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_FILE        = os.environ.get("DATA_FILE", "portwatch_us_data.csv")
-CHOKEPOINT_FILE  = os.environ.get("CHOKEPOINT_FILE", "chokepoint_data.csv")
-COMPARISON_FILE  = "model_comparison_results.json"
+COMPARISON_FILE = "model_comparison_results.json"
+CRON_SECRET     = os.environ.get("CRON_SECRET", "")
 
 # ──────────────────────────────────────────────
 # In-memory cache for the loaded dataset
@@ -95,39 +94,38 @@ _cache: dict = {}
 
 @app.on_event("startup")
 async def ensure_data():
-    """Auto-pull data from IMF PortWatch if CSV files are missing."""
-    if not Path(DATA_FILE).exists():
-        logger.info(f"Data file '{DATA_FILE}' not found — pulling from PortWatch API...")
-        try:
+    """Init DB tables and auto-pull data if the DB is empty."""
+    try:
+        from db import init_tables, get_engine
+        init_tables()
+        from sqlalchemy import text
+        engine = get_engine()
+        with engine.connect() as conn:
+            count = conn.execute(text("SELECT COUNT(*) FROM port_data")).scalar()
+        if count == 0:
+            logger.info("DB empty — pulling port data from PortWatch API...")
             data_pull.run_ports()
-            logger.info("Port data pull complete.")
-        except Exception as e:
-            logger.error(f"Port data pull failed: {e}")
-
-    if not Path(CHOKEPOINT_FILE).exists():
-        logger.info(f"Chokepoint file '{CHOKEPOINT_FILE}' not found — pulling from PortWatch API...")
-        try:
             data_pull.run_chokepoints()
-            logger.info("Chokepoint data pull complete.")
-        except Exception as e:
-            logger.error(f"Chokepoint data pull failed: {e}")
+            logger.info("Initial data pull complete.")
+    except Exception as e:
+        logger.error(f"Startup data check failed: {e}")
 
 
 def get_df() -> pd.DataFrame:
     if "df" not in _cache:
-        if not Path(DATA_FILE).exists():
-            raise HTTPException(503, f"Data file '{DATA_FILE}' not found. Set DATA_FILE env var or place the CSV in the working directory.")
-        logger.info(f"Loading data from {DATA_FILE}")
-        _cache["df"] = load_and_clean(DATA_FILE)
+        try:
+            _cache["df"] = load_and_clean()
+        except Exception as e:
+            raise HTTPException(503, f"Could not load port data: {e}")
     return _cache["df"]
 
 
 def get_chokepoint_df() -> pd.DataFrame:
     if "chokepoints" not in _cache:
-        if not Path(CHOKEPOINT_FILE).exists():
-            raise HTTPException(503, f"Chokepoint file '{CHOKEPOINT_FILE}' not found.")
-        logger.info(f"Loading chokepoint data from {CHOKEPOINT_FILE}")
-        _cache["chokepoints"] = load_and_clean_chokepoints(CHOKEPOINT_FILE)
+        try:
+            _cache["chokepoints"] = load_and_clean_chokepoints()
+        except Exception as e:
+            raise HTTPException(503, f"Could not load chokepoint data: {e}")
     return _cache["chokepoints"]
 
 
@@ -826,3 +824,39 @@ def risk_assessment(port: str = Query(..., description="Port name")):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ──────────────────────────────────────────────
+# Cron trigger endpoints (called by Render Cron Jobs)
+# Secured with CRON_SECRET header
+# ──────────────────────────────────────────────
+
+from fastapi import Header
+
+def _check_cron_secret(x_cron_secret: str = Header(default="")):
+    if CRON_SECRET and x_cron_secret != CRON_SECRET:
+        raise HTTPException(401, "Unauthorized")
+
+
+@app.post("/admin/run-data-pull")
+def cron_data_pull(x_cron_secret: str = Header(default="")):
+    """Cron: pull latest port + chokepoint data and refresh in-memory cache."""
+    _check_cron_secret(x_cron_secret)
+    try:
+        data_pull.run_ports()
+        data_pull.run_chokepoints()
+        _cache.clear()   # force reload on next request
+        return {"status": "ok", "message": "Data pull complete, cache cleared"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/admin/validate-forecasts")
+def cron_validate(x_cron_secret: str = Header(default="")):
+    """Cron: validate saved forecast predictions against new actuals."""
+    _check_cron_secret(x_cron_secret)
+    try:
+        result = validate()
+        return {"status": "ok", "summary": result}
+    except Exception as e:
+        raise HTTPException(500, str(e))

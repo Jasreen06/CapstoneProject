@@ -21,12 +21,20 @@ start "DockWise Backend" cmd /k "cd /d %~dp0venv2\backend && %~dp0venv2\Scripts\
 :: Wait for backend to be ready
 timeout /t 6 /nobreak >nul
 
-:: ── 4. Start frontend ──────────────────────────────────────────────────────
-echo [4/4] Starting frontend...
+:: ── 4. Start AIS vessel tracking service ───────────────────────────────────
+echo [4/5] Starting AIS service...
+start "DockWise AIS" cmd /k "cd /d %~dp0venv2\backend && %~dp0venv2\Scripts\python.exe -m uvicorn AIS.ais_api:app --port 8001"
+
+:: Wait for AIS to be ready
+timeout /t 3 /nobreak >nul
+
+:: ── 5. Start frontend ──────────────────────────────────────────────────────
+echo [5/5] Starting frontend...
 start "DockWise Frontend" cmd /k "cd /d %~dp0venv2\frontend && npm start"
 
 echo.
 echo  Backend  ^>  http://localhost:8004
+echo  AIS      ^>  http://localhost:8001
 echo  Frontend ^>  http://localhost:3000
 echo  API docs ^>  http://localhost:8004/docs
 echo.
