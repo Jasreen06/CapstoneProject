@@ -14,8 +14,8 @@ const T = {
   sans: "'Syne', sans-serif", mono: "'JetBrains Mono', monospace",
 };
 
-const AIS_BASE = "http://localhost:8001";
-const API_BASE = "http://localhost:8004";
+const AIS_BASE = process.env.REACT_APP_AIS_URL || "http://localhost:8001";
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8004";
 
 /* ── US Port Coordinates ─────────────────────────────────── */
 const PORT_COORDS = {
