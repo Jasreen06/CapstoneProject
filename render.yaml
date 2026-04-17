@@ -1,13 +1,6 @@
 # render.yaml — DockWise AI deployment on Render
-# Deploy: connect your GitHub repo in Render dashboard → it reads this file automatically.
-#
-# Services:
-#   1. dockwise-backend  — FastAPI API (port 8004)
-#   2. dockwise-ais      — Live AIS vessel WebSocket service (port 8001)
-#   3. dockwise-frontend — React static site
-#   4. cron: daily-data-pull     — 06:00 UTC daily
-#   5. cron: validate-forecasts  — 07:00 UTC daily
-#   6. cron: model-comparison    — 08:00 UTC every Monday
+# Note: Frontend static site must be created manually in Render dashboard.
+# This file handles: backend, AIS service, and cron jobs.
 
 services:
 
@@ -15,12 +8,13 @@ services:
   - type: web
     name: dockwise-backend
     runtime: python
-    buildCommand: pip install -r venv2/backend/requirements.txt
-    startCommand: cd venv2/backend && uvicorn api:app --host 0.0.0.0 --port $PORT
+    rootDir: venv2/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
       - key: DATABASE_URL
-        sync: false            # set manually in Render dashboard (from Supabase)
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: WEATHER_API_KEY
@@ -28,7 +22,7 @@ services:
       - key: AISSTREAM_API_KEY
         sync: false
       - key: CRON_SECRET
-        sync: false            # set a random string, same value used in cron jobs below
+        sync: false
       - key: ALLOWED_ORIGINS
         value: https://dockwise-frontend.onrender.com,http://localhost:3000
 
@@ -36,69 +30,48 @@ services:
   - type: web
     name: dockwise-ais
     runtime: python
-    buildCommand: pip install -r venv2/backend/requirements.txt
-    startCommand: cd venv2/backend && uvicorn AIS.ais_api:app --host 0.0.0.0 --port $PORT
+    rootDir: venv2/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn AIS.ais_api:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
       - key: AISSTREAM_API_KEY
         sync: false
 
-  # ── 3. React Frontend (Static Site) ───────────────────────────────────────
-  - type: static
-    name: dockwise-frontend
-    buildCommand: cd venv2/frontend && npm install && npm run build
-    staticPublishPath: venv2/frontend/build
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-
-  # ── 4. Cron: Daily data pull (06:00 UTC) ──────────────────────────────────
+  # ── 3. Cron: Daily data pull (06:00 UTC) ──────────────────────────────────
   - type: cron
     name: dockwise-daily-pull
     runtime: python
+    rootDir: venv2/backend
     schedule: "0 6 * * *"
-    buildCommand: pip install -r venv2/backend/requirements.txt
-    startCommand: >
-      cd venv2/backend &&
-      python -c "
-      from dotenv import load_dotenv; load_dotenv();
-      from db import init_tables; init_tables();
-      from data_pull import run_ports, run_chokepoints;
-      run_ports(); run_chokepoints()
-      "
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "from dotenv import load_dotenv; load_dotenv(); from db import init_tables; init_tables(); from data_pull import run_ports, run_chokepoints; run_ports(); run_chokepoints()"
     envVars:
       - key: DATABASE_URL
-        sync: false
-      - key: GROQ_API_KEY
         sync: false
       - key: WEATHER_API_KEY
         sync: false
 
-  # ── 5. Cron: Validate forecasts (07:00 UTC) ───────────────────────────────
+  # ── 4. Cron: Validate forecasts (07:00 UTC) ───────────────────────────────
   - type: cron
     name: dockwise-validate-forecasts
     runtime: python
+    rootDir: venv2/backend
     schedule: "0 7 * * *"
-    buildCommand: pip install -r venv2/backend/requirements.txt
-    startCommand: >
-      cd venv2/backend &&
-      python -c "
-      from dotenv import load_dotenv; load_dotenv();
-      from forecast_tracker import validate;
-      import json; print(json.dumps(validate(), indent=2))
-      "
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "from dotenv import load_dotenv; load_dotenv(); from forecast_tracker import validate; import json; print(json.dumps(validate(), indent=2))"
     envVars:
       - key: DATABASE_URL
         sync: false
 
-  # ── 6. Cron: Weekly model comparison (Monday 08:00 UTC) ───────────────────
+  # ── 5. Cron: Weekly model comparison (Monday 08:00 UTC) ───────────────────
   - type: cron
     name: dockwise-model-comparison
     runtime: python
+    rootDir: venv2/backend
     schedule: "0 8 * * 1"
-    buildCommand: pip install -r venv2/backend/requirements.txt
-    startCommand: cd venv2/backend && python model_comparison.py --top-n 5
+    buildCommand: pip install -r requirements.txt
+    startCommand: python model_comparison.py --top-n 5
     envVars:
       - key: DATABASE_URL
         sync: false
