@@ -11,6 +11,7 @@ import {
   Calendar, Navigation, Zap, Info, MessageSquare, Send, RotateCcw,
 } from "lucide-react";
 import { usePortList, useOverview, useForecast, useTopPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat } from "./hooks/useApi";
+import VesselMap from "./VesselMap";
 
 /* ─────────────────────────────────────────────────────────
    DESIGN TOKENS
@@ -273,10 +274,15 @@ function CongestionHero({ kpi }) {
       {/* Info column */}
       <div style={{ flex:1 }}>
         <div style={{ fontSize:18, fontWeight:800, color: T.ink, marginBottom:4 }}>
-          Current Port Status
+          Port Status
         </div>
         <div style={{ fontSize:12, color: T.inkMid, marginBottom:12 }}>
-          {kpi?.port || "—"} · as of {kpi?.last_date || "—"}
+          {kpi?.port || "—"} · latest data point: {kpi?.last_date || "—"}
+          {lag > 0 && (
+            <span style={{ color: lag > 3 ? T.amber : T.inkDim, marginLeft:6 }}>
+              ({lag}-day lag)
+            </span>
+          )}
         </div>
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.6rem 1.2rem" }}>
@@ -289,7 +295,7 @@ function CongestionHero({ kpi }) {
             </div>
           </div>
           <div>
-            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Trend</div>
+            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Trend (last 7d in data)</div>
             <div style={{ fontSize:13, fontWeight:700, color:
               kpi?.trend_direction === "rising"  ? T.red :
               kpi?.trend_direction === "falling" ? T.green : T.amber,
@@ -301,16 +307,20 @@ function CongestionHero({ kpi }) {
             </div>
           </div>
           <div>
-            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Ships yesterday</div>
+            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>
+              Ships on {kpi?.last_date || "—"}
+            </div>
             <div style={{ fontSize:16, fontWeight:700, color: T.ink }}>
               {kpi?.last_portcalls != null ? Math.round(kpi.last_portcalls) : "—"}
             </div>
           </div>
           <div>
-            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Data lag</div>
-            <div style={{ fontSize:13, fontWeight:600, color: lag > 7 ? T.amber : T.inkMid, display:"flex", alignItems:"center", gap:4 }}>
+            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Data freshness</div>
+            <div style={{ fontSize:13, fontWeight:600,
+              color: lag === 0 ? T.green : lag > 7 ? T.red : lag > 3 ? T.amber : T.inkMid,
+              display:"flex", alignItems:"center", gap:4 }}>
               <Clock size={12} />
-              {lag === 0 ? "Up to date" : `${lag}d ago`}
+              {lag === 0 ? "Up to date" : `${lag}d behind real-time`}
             </div>
           </div>
         </div>
@@ -1447,7 +1457,7 @@ function RiskAssessmentCard({ port }) {
           <div>
             <Label>AI Risk Assessment</Label>
             <div style={{ fontSize:10, color:T.inkMid, marginTop:2 }}>
-              Multi-agent pipeline · Weather + Congestion signals
+              Multi-agent pipeline · Weather + Congestion + Vessel signals
             </div>
           </div>
         </div>
@@ -1473,8 +1483,16 @@ function RiskAssessmentCard({ port }) {
         const signals = data.signals || {};
         const weather = signals.weather    || {};
         const cong    = signals.congestion || {};
+        const vessel  = signals.vessel     || {};
         const color   = riskColor(tier);
         const bg      = riskBg(tier);
+
+        // Vessel delay severity → color (mirrors weather risk levels)
+        const vesselScore = vessel.vessel_delay_score || 0;
+        const vesselTier  =
+          vesselScore >= 0.67 ? "HIGH" :
+          vesselScore >= 0.33 ? "MEDIUM" : "LOW";
+        const vesselColor = riskColor(vesselTier);
 
         return (
           <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
@@ -1520,7 +1538,7 @@ function RiskAssessmentCard({ port }) {
             </div>
 
             {/* Agent signal breakdown */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
 
               {/* Weather signals */}
               <div style={{
@@ -1606,6 +1624,73 @@ function RiskAssessmentCard({ port }) {
                   </div>
                 </div>
               </div>
+
+              {/* Vessel signals */}
+              <div style={{
+                padding:"0.75rem", borderRadius:8,
+                background:T.navy3, border:`1px solid ${T.border}`,
+              }}>
+                <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:8 }}>
+                  <div style={{
+                    width:6, height:6, borderRadius:"50%",
+                    background: vesselColor,
+                  }} />
+                  <Label>Vessel Agent</Label>
+                  {vessel.mega_vessel_flag && (
+                    <span style={{
+                      marginLeft:"auto",
+                      fontSize:9, fontWeight:700,
+                      color:T.amber,
+                      display:"flex", alignItems:"center", gap:3,
+                    }}>
+                      <Ship size={9} /> MEGA
+                    </span>
+                  )}
+                </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                    <span style={{ color:T.inkMid }}>Delay Score</span>
+                    <span style={{ fontWeight:700, color:vesselColor, fontFamily:T.mono }}>
+                      {(vesselScore * 100).toFixed(0)} / 100
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                    <span style={{ color:T.inkMid }}>Vessels (72h)</span>
+                    <span style={{ fontWeight:700, color:T.ink, fontFamily:T.mono }}>
+                      {vessel.vessel_count ?? 0}
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                    <span style={{ color:T.inkMid }}>At Anchor</span>
+                    <span style={{ fontWeight:700, color:T.ink, fontFamily:T.mono }}>
+                      {vessel.anchor_count ?? 0}
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                    <span style={{ color:T.inkMid }}>Moored</span>
+                    <span style={{ fontWeight:700, color:T.ink, fontFamily:T.mono }}>
+                      {vessel.moored_count ?? 0}
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                    <span style={{ color:T.inkMid }}>Incoming ≤72h</span>
+                    <span style={{ fontWeight:700, color:T.ink, fontFamily:T.mono }}>
+                      {vessel.incoming_72h ?? 0}
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+                    <span style={{ color:T.inkMid }}>Queue Pressure</span>
+                    <span style={{ fontWeight:700, color:T.ink, fontFamily:T.mono }}>
+                      {(vessel.queue_pressure ?? 0).toFixed(2)}
+                    </span>
+                  </div>
+                  {vessel.mega_vessel_count > 0 && (
+                    <div style={{ fontSize:10, color:T.inkDim, marginTop:2, lineHeight:1.4 }}>
+                      {vessel.mega_vessel_count} mega-vessel{vessel.mega_vessel_count > 1 ? "s" : ""} in window
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
           </div>
@@ -1622,7 +1707,7 @@ function RiskAssessmentCard({ port }) {
 export default function App() {
   const [port,  setPort]  = useState("");
   const [model, setModel] = useState("Prophet");
-  const [tab,   setTab]   = useState("ports"); // "ports" | "chokepoints" | "advisor"
+  const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "chokepoints" | "advisor"
 
   const { data: portData }                    = usePortList();
   const { data: overview, loading: ovLoad }   = useOverview(port);
@@ -1735,7 +1820,7 @@ export default function App() {
             {/* Tab switcher */}
             <div style={{ display:"flex", alignItems:"center", gap:4,
               background:T.navy3, borderRadius:8, padding:3, border:`1px solid ${T.border}` }}>
-              {[["ports","Port Intelligence"],["chokepoints","Chokepoints"],["advisor","AI Advisor"]].map(([key, label]) => (
+              {[["ports","Port Intelligence"],["vessels","Live Vessels"],["chokepoints","Chokepoints"],["advisor","AI Advisor"]].map(([key, label]) => (
                 <button key={key} onClick={() => setTab(key)} style={{
                   padding:"0.3rem 0.85rem", borderRadius:6, border:"none", cursor:"pointer",
                   background: tab === key ? T.teal : "transparent",
@@ -1774,7 +1859,11 @@ export default function App() {
           </div>
 
           {/* Content */}
-          {tab === "advisor" ? (
+          {tab === "vessels" ? (
+            <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
+              <VesselMap />
+            </div>
+          ) : tab === "advisor" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
               <AiAdvisor port={port} />
             </div>

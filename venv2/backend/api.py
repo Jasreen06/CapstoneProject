@@ -35,6 +35,7 @@ from forecasting import ALL_MODELS, get_model
 from metrics import evaluate_forecast
 from weather import fetch_current_weather, fetch_weather_forecast
 from llm import chat as llm_chat
+import data_pull
 from forecast_tracker import save_forecast, validate, get_log
 
 # Chokepoints used as leading indicators in XGBoost (global trade coverage)
@@ -90,6 +91,26 @@ COMPARISON_FILE  = "model_comparison_results.json"
 # ──────────────────────────────────────────────
 
 _cache: dict = {}
+
+
+@app.on_event("startup")
+async def ensure_data():
+    """Auto-pull data from IMF PortWatch if CSV files are missing."""
+    if not Path(DATA_FILE).exists():
+        logger.info(f"Data file '{DATA_FILE}' not found — pulling from PortWatch API...")
+        try:
+            data_pull.run_ports()
+            logger.info("Port data pull complete.")
+        except Exception as e:
+            logger.error(f"Port data pull failed: {e}")
+
+    if not Path(CHOKEPOINT_FILE).exists():
+        logger.info(f"Chokepoint file '{CHOKEPOINT_FILE}' not found — pulling from PortWatch API...")
+        try:
+            data_pull.run_chokepoints()
+            logger.info("Chokepoint data pull complete.")
+        except Exception as e:
+            logger.error(f"Chokepoint data pull failed: {e}")
 
 
 def get_df() -> pd.DataFrame:
@@ -747,7 +768,8 @@ def risk_assessment(port: str = Query(..., description="Port name")):
     Agents:
       1. WeatherDisruptionAgent  — scores operational weather risk
       2. PortCongestionAgent     — scores current congestion signals
-      3. RiskOrchestrator        — combines signals → risk_score + explanation
+      3. VesselArrivalAgent      — live AIS-based 72h arrival pressure
+      4. RiskOrchestrator        — combines signals → risk_score + explanation
 
     Returns combined risk score (0–1), tier (LOW/MEDIUM/HIGH),
     LLM explanation, and raw agent signals.
@@ -782,6 +804,20 @@ def risk_assessment(port: str = Query(..., description="Port name")):
                 "trend":             result["trend_direction"],
                 "seasonal_context":  result["seasonal_context"],
                 "prophet_expected":  result["prophet_expected"],
+            },
+            "vessel": {
+                "vessel_count":       result.get("vessel_count", 0),
+                "vessel_delay_score": result.get("vessel_delay_score", 0.0),
+                "mega_vessel_flag":   result.get("mega_vessel_flag", False),
+                "anchor_count":       result.get("anchor_count", 0),
+                "moored_count":       result.get("moored_count", 0),
+                "incoming_72h":       result.get("incoming_72h", 0),
+                "queue_pressure":     result.get("queue_pressure", 0.0),
+                "mega_vessel_count":  result.get("mega_vessel_count", 0),
+                "analyst_note":       result.get("vessel_analyst_note", ""),
+                "anomalies":          result.get("vessel_anomalies", []),
+                "mix_summary":        result.get("vessel_mix_summary", ""),
+                "confidence":         result.get("vessel_confidence", "LOW"),
             },
         },
     }

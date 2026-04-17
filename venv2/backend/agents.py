@@ -3,9 +3,9 @@ agents.py
 =========
 Risk Orchestrator + LangGraph pipeline for DockWise AI.
 
-Imports the two specialized agents and wires them into a LangGraph pipeline:
+Imports the three specialized agents and wires them into a LangGraph pipeline:
 
-    weather_agent → congestion_agent → risk_orchestrator → END
+    weather_agent → congestion_agent → vessel_agent → risk_orchestrator → END
 
 Each agent reads from and writes to the shared RiskState.
 
@@ -35,10 +35,19 @@ class RiskState(TypedDict):
     active_warnings: list             # human-readable warning strings
     weather_summary: str              # one-line condition summary
 
-    # ── Vessel Arrival Agent outputs (TODO) ──────────────────────────────────
-    vessel_count: int                 # vessels arriving in next 72 hours
-    vessel_delay_score: float         # historical on-time rate (0-1)
-    mega_vessel_flag: bool            # True if any 10K+ TEU vessel in queue
+    # ── Vessel Arrival Agent outputs ─────────────────────────────────────────
+    vessel_count: int                 # 72-hour pressure: anchored + incoming_72h
+    vessel_delay_score: float         # 0–1 delay risk from queue + arrival surge
+    mega_vessel_flag: bool            # True if any mega-vessel observed
+    anchor_count: int                 # vessels at anchor waiting for berth (live)
+    moored_count: int                 # vessels moored at berth right now (live)
+    incoming_72h: int                 # vessels underway with ETA ≤ 72h (live)
+    queue_pressure: float             # anchor_count / (moored_count + 1)
+    mega_vessel_count: int            # count of mega-vessels in the 72h window
+    vessel_analyst_note: str          # LLM-generated analyst briefing
+    vessel_anomalies: list            # detected anomalies (list of strings)
+    vessel_mix_summary: str           # vessel type composition analysis
+    vessel_confidence: str            # HIGH / MEDIUM / LOW
 
     # ── Port Congestion Agent outputs ─────────────────────────────────────────
     congestion_score: float           # 0 – 100 (z-score vs Prophet baseline)
@@ -58,8 +67,12 @@ class RiskState(TypedDict):
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Contribution weights for the final risk score
-_CONGESTION_WEIGHT = 0.65
-_WEATHER_WEIGHT    = 0.35
+# Congestion + vessel = historical/live "port load" signals (combined 0.65)
+# Weather                                                    (0.35)
+_CONGESTION_WEIGHT = 0.40   # retrospective portcalls vs Prophet baseline
+_VESSEL_WEIGHT     = 0.25   # live 72-hour arrival pressure + queue
+_WEATHER_WEIGHT    = 0.35   # operational impact of current weather
+_MEGA_VESSEL_BONUS = 0.05   # small bump if mega-vessels are in the 72h queue
 
 
 def risk_orchestrator(state: RiskState) -> RiskState:
@@ -67,7 +80,10 @@ def risk_orchestrator(state: RiskState) -> RiskState:
     Combine agent signals into a final risk score and generate an explanation.
 
     Formula:
-        risk_score = 0.65 × (congestion_score / 100) + 0.35 × weather_disruption_score
+        risk_score = 0.40 × (congestion_score / 100)
+                   + 0.25 × vessel_delay_score
+                   + 0.35 × weather_disruption_score
+                   + 0.05 × mega_vessel_flag
 
     Thresholds:
         >= 0.67  →  HIGH
@@ -75,10 +91,18 @@ def risk_orchestrator(state: RiskState) -> RiskState:
         <  0.33  →  LOW
     """
     congestion_norm = state["congestion_score"] / 100.0
+    vessel_score    = state.get("vessel_delay_score", 0.0)
     weather_score   = state["weather_disruption_score"]
+    mega_bonus      = _MEGA_VESSEL_BONUS if state.get("mega_vessel_flag") else 0.0
 
     risk_score = round(
-        _CONGESTION_WEIGHT * congestion_norm + _WEATHER_WEIGHT * weather_score,
+        min(
+            _CONGESTION_WEIGHT * congestion_norm
+            + _VESSEL_WEIGHT    * vessel_score
+            + _WEATHER_WEIGHT   * weather_score
+            + mega_bonus,
+            1.0,
+        ),
         3,
     )
 
@@ -121,23 +145,31 @@ def _generate_explanation(state: RiskState, risk_score: float, risk_tier: str) -
             max_tokens=400,
         )
 
+        mega_note = " (includes mega-vessels)" if state.get("mega_vessel_flag") else ""
         prompt = f"""Port: {state['port']}
 Overall Risk: {risk_tier}  (score {risk_score:.2f} / 1.0)
 
 Agent Signals:
-  Congestion Score : {state['congestion_score']} / 100
-  Congestion Ratio : {state['congestion_ratio']}x vs 90-day baseline
-  Trend            : {state['trend_direction']}
-  Seasonal Context : {state['seasonal_context']}
-  Weather Risk     : {state['weather_risk_level']}
-  Conditions       : {state['weather_summary']}
-  Active Warnings  : {', '.join(state['active_warnings']) if state['active_warnings'] else 'None'}
+  Congestion Score   : {state['congestion_score']} / 100
+  Congestion Ratio   : {state['congestion_ratio']}x vs 90-day baseline
+  Trend              : {state['trend_direction']}
+  Seasonal Context   : {state['seasonal_context']}
+  Vessels (72h)      : {state.get('vessel_count', 0)}{mega_note}
+    at anchor        : {state.get('anchor_count', 0)}  (waiting for berth)
+    moored           : {state.get('moored_count', 0)}  (currently at berth)
+    incoming <=72h   : {state.get('incoming_72h', 0)}  (underway with ETA in 72h)
+  Queue Pressure     : {state.get('queue_pressure', 0.0)} waiting per berth
+  Vessel Delay Score : {state.get('vessel_delay_score', 0.0)} / 1.0
+  Weather Risk       : {state['weather_risk_level']}
+  Conditions         : {state['weather_summary']}
+  Active Warnings    : {', '.join(state['active_warnings']) if state['active_warnings'] else 'None'}
 
-Write a 3-4 sentence risk assessment:
+Write a 4-5 sentence risk assessment:
 1. Lead with the overall risk tier and score.
-2. Identify the primary driver (congestion or weather).
-3. Note the trend and seasonal context.
-4. End with 1-2 specific actionable recommendations."""
+2. Identify the primary driver(s): congestion, vessel pressure, or weather.
+3. If vessels are waiting or arriving heavily, mention the 72h arrival count and queue.
+4. Note the trend and seasonal context.
+5. End with 1-2 specific actionable recommendations."""
 
         response = llm.invoke([
             SystemMessage(content="You are DockWise AI, a maritime port risk advisor. Be concise, specific, and actionable."),
@@ -166,6 +198,17 @@ def _fallback_explanation(state: RiskState, risk_score: float, risk_tier: str) -
         )
     else:
         parts.append(f"Congestion is LOW at {state['congestion_score']}/100.")
+
+    # Vessel 72-hour signal
+    vessel_count = state.get("vessel_count", 0)
+    anchor = state.get("anchor_count", 0)
+    incoming = state.get("incoming_72h", 0)
+    if vessel_count > 0:
+        mega_note = " including mega-vessels" if state.get("mega_vessel_flag") else ""
+        parts.append(
+            f"{vessel_count} vessels expected in next 72h "
+            f"({anchor} waiting, {incoming} incoming){mega_note}."
+        )
 
     if state["weather_risk_level"] != "LOW":
         parts.append(
@@ -197,7 +240,7 @@ def build_risk_graph():
 
     graph.add_node("weather_agent",     weather_agent.run)
     graph.add_node("congestion_agent",  congestion_agent.run)
-    graph.add_node("vessel_agent",      vessel_agent.run)      # TODO: implement
+    graph.add_node("vessel_agent",      vessel_agent.run)
     graph.add_node("risk_orchestrator", risk_orchestrator)
 
     graph.set_entry_point("weather_agent")
@@ -238,10 +281,19 @@ def run_risk_assessment(port: str) -> dict:
         "weather_risk_level":       "LOW",
         "active_warnings":          [],
         "weather_summary":          "",
-        # Vessel agent defaults (TODO)
+        # Vessel agent defaults
         "vessel_count":             0,
         "vessel_delay_score":       0.0,
         "mega_vessel_flag":         False,
+        "anchor_count":             0,
+        "moored_count":             0,
+        "incoming_72h":             0,
+        "queue_pressure":           0.0,
+        "mega_vessel_count":        0,
+        "vessel_analyst_note":      "",
+        "vessel_anomalies":         [],
+        "vessel_mix_summary":       "",
+        "vessel_confidence":        "LOW",
         # Congestion agent defaults
         "congestion_score":         50.0,
         "congestion_ratio":         1.0,
