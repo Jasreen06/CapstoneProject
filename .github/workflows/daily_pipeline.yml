@@ -1,0 +1,31 @@
+name: DockWise Daily Pipeline
+
+on:
+  schedule:
+    - cron: "0 6 * * *"    # Daily data pull — 06:00 UTC
+    - cron: "0 7 * * *"    # Validate forecasts — 07:00 UTC
+  workflow_dispatch:        # Allows manual trigger from GitHub UI
+
+jobs:
+
+  data-pull:
+    name: Pull Port & Chokepoint Data
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 6 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Trigger data pull
+        run: |
+          curl -X POST ${{ secrets.BACKEND_URL }}/admin/run-data-pull \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -f --retry 3 --retry-delay 10
+
+  validate-forecasts:
+    name: Validate Forecast Predictions
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 7 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Trigger forecast validation
+        run: |
+          curl -X POST ${{ secrets.BACKEND_URL }}/admin/validate-forecasts \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -f --retry 3 --retry-delay 10
