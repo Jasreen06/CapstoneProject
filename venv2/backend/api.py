@@ -814,6 +814,10 @@ def risk_assessment(port: str = Query(..., description="Port name")):
                 "incoming_72h":       result.get("incoming_72h", 0),
                 "queue_pressure":     result.get("queue_pressure", 0.0),
                 "mega_vessel_count":  result.get("mega_vessel_count", 0),
+                "analyst_note":       result.get("vessel_analyst_note", ""),
+                "anomalies":          result.get("vessel_anomalies", []),
+                "mix_summary":        result.get("vessel_mix_summary", ""),
+                "confidence":         result.get("vessel_confidence", "LOW"),
             },
         },
     }
