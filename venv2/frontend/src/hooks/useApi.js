@@ -49,3 +49,18 @@ export async function postChat(question, port, resetMemory = false) {
   }
   return res.json();
 }
+
+export async function postFollowups(answer, port) {
+  try {
+    const res = await fetch(`${BASE}/api/chat/followups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer, port: port || null }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.followups || [];
+  } catch {
+    return [];
+  }
+}
