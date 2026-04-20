@@ -10,7 +10,7 @@ import {
   ChevronDown, AlertTriangle, CheckCircle, Clock, Ship,
   Calendar, Navigation, Zap, Info, MessageSquare, Send, RotateCcw,
 } from "lucide-react";
-import { usePortList, useOverview, useForecast, useTopPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat } from "./hooks/useApi";
+import { usePortList, useOverview, useForecast, useTopPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
 import VesselMap from "./VesselMap";
 
 /* ─────────────────────────────────────────────────────────
@@ -1219,24 +1219,46 @@ function SupplyChainRiskCard({ port }) {
 /* ─────────────────────────────────────────────────────────
    AI ADVISOR (chat panel)
 ───────────────────────────────────────────────────────── */
-const SUGGESTED_QUESTIONS = [
-  "What's causing the current congestion level?",
-  "Should I reroute shipments today?",
-  "What upstream chokepoints are at risk?",
-  "How will weather affect port operations?",
-  "What does the 7-day forecast mean for my supply chain?",
-];
+const QUESTION_CATEGORIES = {
+  Diagnostic: [
+    "Break down today's delay score for {port} — which factor is driving it most?",
+    "Is {port}'s current congestion an anomaly or within normal variance?",
+    "How does {port} today compare to the same week last year?",
+    "Which vessel classes are contributing most to queue pressure at {port}?",
+  ],
+  Predictive: [
+    "What's the 7-day congestion forecast confidence interval for {port}?",
+    "When is the next predicted congestion spike at {port}?",
+    "Forecast berth availability at {port} for vessels arriving in 72 hours",
+    "If a chokepoint closes for 48h, what's the cascade effect on {port}?",
+  ],
+  Comparative: [
+    "Compare {port} to Oakland and Seattle this week",
+    "Which West Coast port has the lowest delay score right now?",
+    "Rank ports by 7-day forecast improvement",
+    "Is rerouting from {port} to Oakland worth the extra transit time?",
+  ],
+  Operational: [
+    "Best arrival window at {port} to minimize wait time in the next 5 days",
+    "Should I hold vessels at anchor or reroute from {port}?",
+    "What's the expected dwell time at {port} for a vessel arriving Thursday?",
+    "Recommend a contingency plan if {port} volatility exceeds threshold",
+  ],
+};
 
 function AiAdvisor({ port }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
+  const [activeCategory, setActiveCategory] = useState("Diagnostic");
   const bottomRef               = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  const portLabel = port || "Los Angeles-Long Beach";
 
   const send = async (question, reset = false) => {
     const q = question || input.trim();
@@ -1247,7 +1269,25 @@ function AiAdvisor({ port }) {
     setLoading(true);
     try {
       const res = await postChat(q, port, reset);
-      setMessages(prev => [...prev, { role: "ai", text: res.answer }]);
+      const sources = res.sources || [];
+      // Add AI message first
+      setMessages(prev => [...prev, { role: "ai", text: res.answer, sources, followups: null }]);
+      // Fetch follow-ups in background
+      postFollowups(res.answer, port).then(followups => {
+        if (followups && followups.length > 0) {
+          setMessages(prev => {
+            const updated = [...prev];
+            // Find the last AI message and attach followups
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].role === "ai" && updated[i].followups === null) {
+                updated[i] = { ...updated[i], followups };
+                break;
+              }
+            }
+            return updated;
+          });
+        }
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1261,6 +1301,7 @@ function AiAdvisor({ port }) {
   };
 
   const isEmpty = messages.length === 0;
+  const categories = Object.keys(QUESTION_CATEGORIES);
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
@@ -1313,32 +1354,51 @@ function AiAdvisor({ port }) {
               </div>
             </div>
 
-            {/* Suggested questions */}
-            <div style={{ display:"flex", flexDirection:"column", gap:6, width:"100%", maxWidth:480 }}>
-              <div style={{ fontSize:10, color:T.inkDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:2 }}>
-                Suggested questions
-              </div>
-              {SUGGESTED_QUESTIONS.map((q, i) => (
-                <button key={i} onClick={() => send(q)} style={{
-                  textAlign:"left", padding:"0.5rem 0.8rem", borderRadius:8,
-                  background:T.navy3, border:`1px solid ${T.border}`,
-                  color:T.inkMid, fontSize:12, cursor:"pointer", fontFamily:T.sans,
+            {/* Category pills */}
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"center" }}>
+              {categories.map(cat => (
+                <button key={cat} onClick={() => setActiveCategory(cat)} style={{
+                  padding:"0.3rem 0.75rem", borderRadius:20,
+                  background: activeCategory === cat ? `${T.teal}22` : "transparent",
+                  border: `1px solid ${activeCategory === cat ? T.teal : T.border}`,
+                  color: activeCategory === cat ? T.teal : T.inkMid,
+                  fontSize:11, fontWeight: activeCategory === cat ? 700 : 500,
+                  cursor:"pointer", fontFamily:T.sans,
                   transition:"all 0.15s",
-                }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = T.teal; e.currentTarget.style.color = T.ink; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.inkMid; }}
-                >
-                  {q}
+                }}>
+                  {cat}
                 </button>
               ))}
+            </div>
+
+            {/* Suggested questions for active category */}
+            <div style={{ display:"flex", flexDirection:"column", gap:6, width:"100%", maxWidth:520 }}>
+              <div style={{ fontSize:10, color:T.inkDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:2 }}>
+                {activeCategory} questions
+              </div>
+              {QUESTION_CATEGORIES[activeCategory].map((q, i) => {
+                const resolved = q.replace(/\{port\}/g, portLabel);
+                return (
+                  <button key={i} onClick={() => send(resolved)} style={{
+                    textAlign:"left", padding:"0.5rem 0.8rem", borderRadius:8,
+                    background:T.navy3, border:`1px solid ${T.border}`,
+                    color:T.inkMid, fontSize:12, cursor:"pointer", fontFamily:T.sans,
+                    transition:"all 0.15s",
+                  }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = T.teal; e.currentTarget.style.color = T.ink; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.inkMid; }}
+                  >
+                    {resolved}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
 
         {messages.map((m, i) => (
-          <div key={i} style={{
-            display:"flex",
-            justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+          <div key={i} style={{ display:"flex", flexDirection:"column",
+            alignItems: m.role === "user" ? "flex-end" : "flex-start",
           }}>
             <div style={{
               maxWidth:"82%",
@@ -1358,7 +1418,35 @@ function AiAdvisor({ port }) {
                 </div>
               )}
               {m.text}
+              {/* Sources footer */}
+              {m.role === "ai" && m.sources && m.sources.length > 0 && (
+                <div style={{
+                  marginTop:8, paddingTop:6, borderTop:`1px solid ${T.border}`,
+                  fontSize:10, color:T.inkDim, fontStyle:"italic",
+                }}>
+                  Sources: {m.sources.join(" · ")}
+                </div>
+              )}
             </div>
+            {/* Follow-up chips */}
+            {m.role === "ai" && m.followups && m.followups.length > 0 && (
+              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:6, maxWidth:"82%" }}>
+                {m.followups.map((fq, fi) => (
+                  <button key={fi} onClick={() => send(fq)} disabled={loading} style={{
+                    padding:"0.25rem 0.6rem", borderRadius:14,
+                    background:"transparent", border:`1px solid ${T.border}`,
+                    color:T.inkMid, fontSize:11, cursor: loading ? "not-allowed" : "pointer",
+                    fontFamily:T.sans, transition:"all 0.15s",
+                    opacity: loading ? 0.5 : 1,
+                  }}
+                    onMouseEnter={e => { if (!loading) { e.currentTarget.style.borderColor = T.teal; e.currentTarget.style.color = T.teal; } }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.inkMid; }}
+                  >
+                    {fq}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
 

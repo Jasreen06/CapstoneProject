@@ -34,7 +34,7 @@ from data_cleaning import (load_and_clean, get_port_daily_series,
 from forecasting import ALL_MODELS, get_model
 from metrics import evaluate_forecast
 from weather import fetch_current_weather, fetch_weather_forecast
-from llm import chat as llm_chat
+from llm import chat as llm_chat, generate_followups as llm_followups
 import data_pull
 from forecast_tracker import save_forecast, validate, get_log
 
@@ -723,7 +723,7 @@ def chat_endpoint(req: ChatRequest):
         pass
 
     try:
-        answer = llm_chat(
+        result = llm_chat(
             question=req.question,
             port=req.port,
             overview=overview_data,
@@ -733,12 +733,32 @@ def chat_endpoint(req: ChatRequest):
             weather=weather_data,
             reset_memory=req.reset_memory,
         )
-        return {"answer": answer, "port": req.port}
+        # result is now {"answer": str, "sources": list}
+        if isinstance(result, dict):
+            return {"answer": result["answer"], "sources": result.get("sources", []), "port": req.port}
+        # Fallback for plain string (shouldn't happen but be safe)
+        return {"answer": result, "sources": [], "port": req.port}
     except RuntimeError as e:
         raise HTTPException(503, str(e))
     except Exception as e:
         logger.error(f"/api/chat error: {e}")
         raise HTTPException(500, f"LLM error: {e}")
+
+
+class FollowupRequest(BaseModel):
+    answer: str
+    port: str | None = None
+
+
+@app.post("/api/chat/followups")
+def followup_endpoint(req: FollowupRequest):
+    """Generate 3 follow-up question chips based on an AI answer."""
+    try:
+        followups = llm_followups(req.answer, req.port)
+        return {"followups": followups}
+    except Exception as e:
+        logger.error(f"/api/chat/followups error: {e}")
+        return {"followups": []}
 
 
 @app.get("/api/forecast-validation")

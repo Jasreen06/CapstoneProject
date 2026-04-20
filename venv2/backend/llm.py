@@ -145,7 +145,15 @@ SYSTEM_PROMPT = (
     "- Reference specific scores, dates, and chokepoint names from the live data.\n"
     "- If asked about something not in the data, use your maritime knowledge base.\n"
     "- Format lists with bullet points for readability.\n"
-    "- Do not speculate about political events beyond what the knowledge base describes."
+    "- Do not speculate about political events beyond what the knowledge base describes.\n\n"
+    "IMPORTANT: You MUST respond with valid JSON in this exact format:\n"
+    '{"answer": "<your full answer text here>", "sources": ["<source1>", "<source2>"]}\n\n'
+    "For sources, list only the data sources you actually used from this set:\n"
+    "AIS records, ARIMA forecast, Prophet forecast, XGBoost forecast, NOAA weather, "
+    "OpenWeatherMap, IMF PortWatch, congestion z-score, vessel delay score, "
+    "chokepoint transit data, maritime knowledge base.\n"
+    "Include 1-4 sources that are most relevant. Do NOT include sources you did not use.\n"
+    "The answer field should contain your full response as plain text (use bullet points with - not *)."
 )
 
 
@@ -286,15 +294,68 @@ def chat(
 
     try:
         response = llm.invoke(messages)
-        answer = response.content.strip()
+        raw = response.content.strip()
+
+        # Parse structured JSON response
+        import json
+        answer_text = raw
+        sources = []
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                answer_text = parsed.get("answer", raw)
+                sources = parsed.get("sources", [])
+        except json.JSONDecodeError:
+            # Try to extract JSON from markdown code blocks
+            import re
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
+            if json_match:
+                try:
+                    parsed = json.loads(json_match.group(1))
+                    answer_text = parsed.get("answer", raw)
+                    sources = parsed.get("sources", [])
+                except json.JSONDecodeError:
+                    pass
 
         # Update history with trimmed versions (omit bulky knowledge for memory efficiency)
         _history.append(HumanMessage(content=f"[Port: {port}] {question}"))
-        _history.append(AIMessage(content=answer))
+        _history.append(AIMessage(content=answer_text))
         # Keep only last N turns
         _history = _history[-(2 * _MAX_TURNS):]
 
-        return answer
+        return {"answer": answer_text, "sources": sources}
     except Exception as e:
         logger.error(f"LLM error: {e}")
         raise
+
+
+def generate_followups(answer: str, port: str | None = None) -> list[str]:
+    """
+    Generate 3 short follow-up questions based on an AI answer.
+    Returns a list of 3 strings.
+    """
+    import json
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    llm = _get_llm()
+    port_label = port or "this port"
+    prompt = (
+        f"Given this answer about {port_label}: {answer}\n\n"
+        "Generate exactly 3 short follow-up questions (under 10 words each) "
+        "a supply chain manager would naturally ask next. "
+        "Return as a JSON array of strings, nothing else."
+    )
+
+    try:
+        response = llm.invoke([
+            SystemMessage(content="You generate concise follow-up questions. Return only a JSON array of 3 strings."),
+            HumanMessage(content=prompt),
+        ])
+        raw = response.content.strip()
+        followups = json.loads(raw)
+        if isinstance(followups, list) and len(followups) >= 3:
+            return [str(q) for q in followups[:3]]
+    except Exception as e:
+        logger.error(f"Follow-up generation error: {e}")
+
+    return []
