@@ -53,14 +53,14 @@ def _paginated_fetch(base_url, where_clause, label="records"):
         data = response.json()
 
         if "error" in data:
-            print(f"  API Error ({label}):", data["error"])
+            logger.error(f"API error ({label}): {data['error']}")
             break
 
         features = data.get("features", [])
         if not features:
             break
 
-        print(f"  [{label}] fetched {len(features)} records (offset: {offset})")
+        logger.info(f"[{label}] fetched {len(features)} records (offset: {offset})")
         all_features.extend(features)
 
         if len(features) < batch_size:
@@ -75,7 +75,7 @@ def _paginated_fetch(base_url, where_clause, label="records"):
 def _save(features, table_name: str, convert_date_ms=False):
     """Save fetched records to the Supabase DB table, ignoring duplicates."""
     if not features:
-        print("  No new records — already up to date.")
+        logger.info("No new records — already up to date.")
         return
 
     df = pd.json_normalize([f["attributes"] for f in features])
@@ -91,7 +91,7 @@ def _save(features, table_name: str, convert_date_ms=False):
         from db import get_engine, upsert_ignore
         engine = get_engine()
         upsert_ignore(table_name, df, engine=engine)
-        print(f"  Saved {len(df)} records → {table_name}")
+        logger.info(f"Saved {len(df)} records → {table_name}")
     except Exception as e:
         logger.error(f"DB save failed for {table_name}: {e}")
         raise
@@ -104,10 +104,10 @@ def run_ports():
 
     if last_date:
         where = f"country = 'UNITED STATES' AND date > '{last_date}'"
-        print(f"\n[Ports] Fetching records after {last_date}...")
+        logger.info(f"[Ports] Fetching records after {last_date}...")
     else:
         where = "country = 'UNITED STATES'"
-        print("\n[Ports] No existing data — fetching full history...")
+        logger.info("[Ports] No existing data — fetching full history...")
 
     features = _paginated_fetch(PORTS_URL, where, label="ports")
     _save(features, "port_data")
@@ -120,10 +120,10 @@ def run_chokepoints():
 
     if last_date:
         where = f"date > '{last_date}'"
-        print(f"\n[Chokepoints] Fetching records after {last_date}...")
+        logger.info(f"[Chokepoints] Fetching records after {last_date}...")
     else:
         where = f"date >= '{CHOKEPOINTS_START}'"
-        print(f"\n[Chokepoints] No existing data — fetching from {CHOKEPOINTS_START}...")
+        logger.info(f"[Chokepoints] No existing data — fetching from {CHOKEPOINTS_START}...")
 
     features = _paginated_fetch(CHOKEPOINTS_URL, where, label="chokepoints")
     _save(features, "chokepoint_data", convert_date_ms=True)

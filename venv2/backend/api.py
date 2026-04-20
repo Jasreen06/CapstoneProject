@@ -827,8 +827,7 @@ def health():
 
 
 # ──────────────────────────────────────────────
-# Cron trigger endpoints (called by Render Cron Jobs)
-# Secured with CRON_SECRET header
+# Admin / cron endpoints — secured with CRON_SECRET header
 # ──────────────────────────────────────────────
 
 from fastapi import Header
@@ -859,4 +858,22 @@ def cron_validate(x_cron_secret: str = Header(default="")):
         result = validate()
         return {"status": "ok", "summary": result}
     except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/model-comparison/run")
+def run_model_comparison(x_cron_secret: str = Header(default="")):
+    """Cron (weekly): run walk-forward cross-validation for all models and save results."""
+    _check_cron_secret(x_cron_secret)
+    try:
+        from model_comparison import run_comparison
+        # filepath arg is ignored by load_and_clean() which reads from DB
+        results = run_comparison("portwatch_us_data.csv", top_n=5)
+        with open(COMPARISON_FILE, "w") as f:
+            json.dump(results, f, indent=2)
+        _cache.pop("comparison", None)
+        port_count = len(results.get("results", {}).get("ports", results.get("ports", [])))
+        return {"status": "ok", "ports_evaluated": port_count}
+    except Exception as e:
+        logger.error(f"/api/model-comparison/run error: {e}")
         raise HTTPException(500, str(e))

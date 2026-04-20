@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: "0 6 * * *"    # Daily data pull — 06:00 UTC
     - cron: "0 7 * * *"    # Validate forecasts — 07:00 UTC
+    - cron: "0 8 * * 1"    # Weekly model comparison — Monday 08:00 UTC
   workflow_dispatch:        # Allows manual trigger from GitHub UI
 
 jobs:
@@ -15,9 +16,12 @@ jobs:
     steps:
       - name: Trigger data pull
         run: |
-          curl -X POST ${{ secrets.BACKEND_URL }}/admin/run-data-pull \
+          HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
+            -X POST ${{ secrets.BACKEND_URL }}/admin/run-data-pull \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            -f --retry 3 --retry-delay 10
+            --retry 3 --retry-delay 10)
+          echo "Response: $(cat /tmp/res.json)"
+          [ "$HTTP_STATUS" = "200" ] || (echo "Failed: $HTTP_STATUS" && exit 1)
 
   validate-forecasts:
     name: Validate Forecast Predictions
@@ -26,6 +30,23 @@ jobs:
     steps:
       - name: Trigger forecast validation
         run: |
-          curl -X POST ${{ secrets.BACKEND_URL }}/admin/validate-forecasts \
+          HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
+            -X POST ${{ secrets.BACKEND_URL }}/admin/validate-forecasts \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            -f --retry 3 --retry-delay 10
+            --retry 3 --retry-delay 10)
+          echo "Response: $(cat /tmp/res.json)"
+          [ "$HTTP_STATUS" = "200" ] || (echo "Failed: $HTTP_STATUS" && exit 1)
+
+  model-comparison:
+    name: Weekly Model Comparison
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 8 * * 1'
+    steps:
+      - name: Trigger model comparison
+        run: |
+          HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
+            -X POST ${{ secrets.BACKEND_URL }}/api/model-comparison/run \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            --retry 3 --retry-delay 10)
+          echo "Response: $(cat /tmp/res.json)"
+          [ "$HTTP_STATUS" = "200" ] || (echo "Failed: $HTTP_STATUS" && exit 1)
