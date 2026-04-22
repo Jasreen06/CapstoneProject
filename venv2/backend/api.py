@@ -782,13 +782,17 @@ def risk_assessment(port: str = Query(..., description="Port name")):
     if port not in df["portname"].values:
         raise HTTPException(404, f"Port '{port}' not found.")
 
+    cache_key = f"risk:{port}"
+    if cache_key in _cache:
+        return _cache[cache_key]
+
     try:
         result = run_risk_assessment(port)
     except Exception as e:
         logger.error(f"/api/risk-assessment error: {e}")
         raise HTTPException(500, str(e))
 
-    return {
+    response = {
         "port":        result["port"],
         "risk_score":  result["risk_score"],
         "risk_tier":   result["risk_tier"],
@@ -823,6 +827,8 @@ def risk_assessment(port: str = Query(..., description="Port name")):
             },
         },
     }
+    _cache[cache_key] = response
+    return response
 
 
 @app.get("/health")
