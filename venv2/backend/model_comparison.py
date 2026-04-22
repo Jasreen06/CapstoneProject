@@ -161,12 +161,22 @@ def run_comparison(
         },
     }
 
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(output, f, indent=2, default=_json_safe)
+    try:
+        from db import get_engine
+        from sqlalchemy import text
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM model_comparison_results"))
+            conn.execute(text(
+                "INSERT INTO model_comparison_results (results) VALUES (:r)"
+            ), {"r": json.dumps(output, default=_json_safe)})
+            conn.commit()
+        logger.info("Model comparison results saved to database.")
+    except Exception as e:
+        logger.error(f"Failed to save model comparison results to DB: {e}")
 
     logger.info(f"\n{'='*60}")
     logger.info(f"Best model: {best_model}")
-    logger.info(f"Results saved to {OUTPUT_FILE}")
     _print_summary_table(aggregate_summary)
 
     return output

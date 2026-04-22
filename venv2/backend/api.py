@@ -82,8 +82,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-COMPARISON_FILE = "model_comparison_results.json"
-CRON_SECRET     = os.environ.get("CRON_SECRET", "")
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 # ──────────────────────────────────────────────
 # In-memory cache for the loaded dataset
@@ -94,7 +93,7 @@ _cache: dict = {}
 
 @app.on_event("startup")
 async def ensure_data():
-    """Init DB tables and auto-pull data if the DB is empty."""
+    """Init DB tables on startup. Data pull runs via GitHub Actions daily cron."""
     try:
         from db import init_tables, get_engine
         init_tables()
@@ -103,10 +102,9 @@ async def ensure_data():
         with engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM port_data")).scalar()
         if count == 0:
-            logger.info("DB empty — pulling port data from PortWatch API...")
-            data_pull.run_ports()
-            data_pull.run_chokepoints()
-            logger.info("Initial data pull complete.")
+            logger.warning("DB is empty — trigger data pull via GitHub Actions or POST /admin/run-data-pull")
+        else:
+            logger.info(f"Startup OK — {count} port records in DB.")
     except Exception as e:
         logger.error(f"Startup data check failed: {e}")
 
@@ -406,16 +404,22 @@ def forecast(
 
 @app.get("/api/model-comparison")
 def model_comparison_results():
-    """Return saved model comparison results (run model_comparison.py first)."""
-    if not Path(COMPARISON_FILE).exists():
-        return {
-            "available": False,
-            "message": f"Run 'python model_comparison.py' to generate {COMPARISON_FILE}",
-        }
-    with open(COMPARISON_FILE) as f:
-        data = json.load(f)
-    data["available"] = True
-    return data
+    """Return saved model comparison results."""
+    try:
+        from db import get_engine
+        from sqlalchemy import text
+        engine = get_engine()
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT results FROM model_comparison_results ORDER BY saved_at DESC LIMIT 1"
+            )).fetchone()
+        if not row:
+            return {"available": False, "message": "No results yet. Trigger via /api/model-comparison/run"}
+        data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        data["available"] = True
+        return data
+    except Exception as e:
+        raise HTTPException(503, f"Could not load model comparison results: {e}")
 
 
 @app.get("/api/metrics")
@@ -887,11 +891,7 @@ def run_model_comparison(x_cron_secret: str = Header(default="")):
     _check_cron_secret(x_cron_secret)
     try:
         from model_comparison import run_comparison
-        # filepath arg is ignored by load_and_clean() which reads from DB
-        results = run_comparison("portwatch_us_data.csv", top_n=5)
-        with open(COMPARISON_FILE, "w") as f:
-            json.dump(results, f, indent=2)
-        _cache.pop("comparison", None)
+        results = run_comparison(top_n=5)
         port_count = len(results.get("results", {}).get("ports", results.get("ports", [])))
         return {"status": "ok", "ports_evaluated": port_count}
     except Exception as e:

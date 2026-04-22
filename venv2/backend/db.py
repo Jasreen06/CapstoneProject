@@ -85,6 +85,13 @@ def init_tables(engine=None):
                 validated_at   TIMESTAMP
             )
         """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS model_comparison_results (
+                id         SERIAL PRIMARY KEY,
+                saved_at   TIMESTAMP DEFAULT now(),
+                results    JSONB NOT NULL
+            )
+        """))
         conn.commit()
     logger.info("DB tables verified/created.")
 
