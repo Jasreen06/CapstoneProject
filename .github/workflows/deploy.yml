@@ -14,14 +14,11 @@ jobs:
     steps:
       - name: Trigger Render backend deploy
         run: |
-          URL="${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
-          echo "URL length: ${#URL}"
-          echo "URL starts with: ${URL:0:30}"
           HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
-            -X POST "$URL" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" \
             --retry 3 --retry-delay 5)
           echo "Response: $(cat /tmp/res.json)"
-          [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || (echo "Render deploy failed: $HTTP_STATUS" && exit 1)
+          [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || [ "$HTTP_STATUS" = "202" ] || (echo "Render deploy failed: $HTTP_STATUS" && exit 1)
 
       - name: Wait for backend to be healthy
         run: |
@@ -49,7 +46,7 @@ jobs:
             -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK_URL }}" \
             --retry 3 --retry-delay 5)
           echo "Response: $(cat /tmp/res.json)"
-          [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || (echo "Render frontend deploy failed: $HTTP_STATUS" && exit 1)
+          [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || [ "$HTTP_STATUS" = "202" ] || (echo "Render frontend deploy failed: $HTTP_STATUS" && exit 1)
 
   # ── Notify on failure ────────────────────────────────────────────────────────
   notify-failure:
