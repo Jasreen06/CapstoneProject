@@ -16,6 +16,9 @@ jobs:
     steps:
       - name: Trigger data pull
         run: |
+          SECRET="${{ secrets.CRON_SECRET }}"
+          echo "Secret length: ${#SECRET}"
+          echo "Backend URL: ${{ secrets.BACKEND_URL }}"
           HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
             -X POST "${{ secrets.BACKEND_URL }}/admin/run-data-pull" \
             -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
