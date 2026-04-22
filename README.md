@@ -14,14 +14,13 @@
 7. [Weather Integration](#7-weather-integration)
 8. [Multi-Agent Risk Assessment Pipeline](#8-multi-agent-risk-assessment-pipeline)
 9. [LLM AI Advisor](#9-llm-ai-advisor)
-10. [Validation & Backtesting](#10-validation--backtesting)
-11. [API Endpoints](#11-api-endpoints)
-12. [Frontend Dashboard](#12-frontend-dashboard)
-13. [Port-to-Chokepoint Mapping](#13-port-to-chokepoint-mapping)
-14. [File Structure](#14-file-structure)
-15. [Environment Setup](#15-environment-setup)
-16. [How to Run](#16-how-to-run)
-17. [Known Issues & Workarounds](#17-known-issues--workarounds)
+10. [API Endpoints](#10-api-endpoints)
+11. [Frontend Dashboard](#11-frontend-dashboard)
+12. [Port-to-Chokepoint Mapping](#12-port-to-chokepoint-mapping)
+13. [File Structure](#13-file-structure)
+14. [Environment Setup](#14-environment-setup)
+15. [How to Run](#15-how-to-run)
+16. [Known Issues & Workarounds](#16-known-issues--workarounds)
 
 ---
 
@@ -75,12 +74,6 @@
 │  AIS/ais_store.py    → In-memory vessel store (keyed by MMSI)    │
 │  AIS/ais_api.py      → FastAPI REST + SSE endpoints (port 8001)  │
 │                                                                  │
-│  ┌── Validation Suite ────────────────────────────────────────┐  │
-│  │  backtest.py         → V1 vs V2 holdout comparison         │  │
-│  │  backtest_v3.py      → Multi-window walk-forward (V1/V2/V3)│  │
-│  │  save_predictions.py → Save 7-day predictions to CSV       │  │
-│  │  validate_predictions.py → Compare predictions vs actuals  │  │
-│  └────────────────────────────────────────────────────────────┘  │
 └───────────────────────────┬──────────────────────────────────────┘
                             │  HTTP / JSON / SSE
                             ▼
@@ -362,44 +355,7 @@ risk_score = 0.40 * congestion_normalized
 
 ---
 
-## 10. Validation & Backtesting
-
-### 10.1 Holdout Backtest Results
-
-**Single-window backtest** (cutoff: 2026-04-03, 7-day horizon, 19 ports):
-
-| Metric | V1 (Prophet only) | V2 (Ensemble) |
-|--------|-------------------|---------------|
-| Tier Accuracy | 57.1% | **67.7%** |
-| Congestion MAE | 16.6 / 100 | **13.0 / 100** |
-| Portcall MAE | 3.1 | **2.8** |
-
-**Multi-window walk-forward** (4 cutoffs, 19 ports, 532 predictions):
-
-| Version | Tier Accuracy |
-|---------|---------------|
-| V1 | 57.0% |
-| **V2** | **70.1%** |
-| V3 (over-engineered) | 51.3% |
-
-V2 wins on 10/19 ports, ties on 7, loses on 1.
-
-### 10.2 Prediction Pipeline
-
-```
-save_predictions.py   → Save 7-day Prophet/ensemble forecasts to CSV
-data_pull.py          → Pull fresh PortWatch data (run after Tuesday 9 AM ET)
-validate_predictions.py → Compare saved predictions vs actual arrivals
-                          Reports: MAE, MAPE, tier accuracy, confusion matrix
-```
-
-### 10.3 Key Finding
-
-More model complexity does not improve accuracy. V3 added adaptive thresholds, ARIMA as a third ensemble member, and day-of-week adjustments — but accuracy **dropped 19 points** (70.1% → 51.3%). The V2 approach with Prophet+XGBoost ensemble + residual std + momentum is the optimal balance.
-
----
-
-## 11. API Endpoints
+## 10. API Endpoints
 
 ### Main API (port 8004)
 
@@ -426,7 +382,7 @@ More model complexity does not improve accuracy. V3 added adaptive thresholds, A
 
 ---
 
-## 12. Frontend Dashboard
+## 11. Frontend Dashboard
 
 ### Tab 1: Port Intelligence
 - **Sidebar** (visible only on this tab): Port list sorted by congestion, model selector (Prophet/ARIMA/XGBoost)
@@ -457,7 +413,7 @@ More model complexity does not improve accuracy. V3 added adaptive thresholds, A
 
 ---
 
-## 13. Port-to-Chokepoint Mapping
+## 12. Port-to-Chokepoint Mapping
 
 Each US port is mapped to upstream chokepoints based on geographic region, with **real ocean transit lag** times:
 
@@ -483,12 +439,11 @@ Based on the chokepoint's current disruption level:
 
 ---
 
-## 14. File Structure
+## 13. File Structure
 
 ```
 DockWise_AI/
 ├── README.md
-├── REPORT.md                          ← Project report
 │
 └── venv2/
     ├── backend/
@@ -507,11 +462,6 @@ DockWise_AI/
     │   ├── model_comparison.py        ← Walk-forward CV across models
     │   ├── feature_engineering.py     ← Feature engineering utilities
     │   ├── forecast_tracker.py        ← Forecast tracking
-    │   ├── backtest.py                ← V1 vs V2 holdout comparison
-    │   ├── backtest_v3.py             ← Multi-window V1/V2/V3 comparison
-    │   ├── save_predictions.py        ← Save predictions to CSV
-    │   ├── save_predictions_v2.py     ← V2 ensemble predictions
-    │   ├── validate_predictions.py    ← Compare predictions vs actuals
     │   ├── portwatch_us_data.csv      ← US port data
     │   ├── chokepoint_data.csv        ← Chokepoint data
     │   └── AIS/
@@ -530,7 +480,7 @@ DockWise_AI/
 
 ---
 
-## 15. Environment Setup
+## 14. Environment Setup
 
 ### Python Dependencies
 ```
@@ -548,7 +498,7 @@ AISSTREAM_API_KEY=your_aisstream_api_key
 
 ---
 
-## 16. How to Run
+## 15. How to Run
 
 ### Step 1 — Start backend API (port 8004):
 ```bash
@@ -583,7 +533,7 @@ python data_pull.py
 
 ---
 
-## 17. Known Issues & Workarounds
+## 16. Known Issues & Workarounds
 
 | Issue | Cause | Fix |
 |-------|-------|-----|
