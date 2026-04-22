@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { MapContainer, TileLayer, CircleMarker, Circle, Marker, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster/dist/MarkerCluster.css";
 import { Ship, Wifi, WifiOff, RotateCcw, ChevronDown, Anchor, MapPin, Search } from "lucide-react";
 
 /* ── Design tokens (match App.jsx) ────────────────────────── */
@@ -151,6 +153,22 @@ function getVesselIcon(type, color, isSelected) {
     iconAnchor: [size / 2, size / 2],
   });
   _iconCache[key] = icon;
+  return icon;
+}
+
+// Cached anchor divIcons for port centers — one per congestion tier color
+const _portAnchorCache = {};
+function getPortAnchorIcon(score) {
+  const color = score >= 67 ? "#EF4444" : score >= 33 ? "#F59E0B" : "#10B981";
+  if (_portAnchorCache[color]) return _portAnchorCache[color];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="22"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>`;
+  const icon = L.divIcon({
+    html: svg,
+    className: "",
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+  _portAnchorCache[color] = icon;
   return icon;
 }
 
@@ -316,6 +334,90 @@ function FilterDropdown({ label, value, options, onChange }) {
   );
 }
 
+/* ── Multi-select filter dropdown ────────────────────────── */
+function MultiSelectDropdown({ label, selected, options, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const allSelected = selected.size === options.length;
+
+  const toggle = (opt) => {
+    const next = new Set(selected);
+    if (next.has(opt)) next.delete(opt); else next.add(opt);
+    onChange(next);
+  };
+
+  const toggleAll = () => {
+    onChange(allSelected ? new Set() : new Set(options));
+  };
+
+  const summary = allSelected
+    ? "All types"
+    : selected.size === 0
+      ? label
+      : [...selected].slice(0, 2).join(" + ") + (selected.size > 2 ? ` (${selected.size})` : selected.size === 2 ? ` (${selected.size})` : "");
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={() => setOpen(!open)} style={{
+        background: !allSelected && selected.size > 0 ? `${T.teal}22` : T.navy2,
+        border: `1px solid ${!allSelected && selected.size > 0 ? T.teal : T.border}`,
+        borderRadius: 6, color: !allSelected && selected.size > 0 ? T.teal : T.inkMid,
+        cursor: "pointer", padding: "5px 10px",
+        fontSize: 11, fontFamily: T.sans, display: "flex", alignItems: "center", gap: 4,
+      }}>
+        {summary} <ChevronDown size={10} />
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 2000,
+          background: T.navy2, border: `1px solid ${T.border}`, borderRadius: 6,
+          minWidth: 170, maxHeight: 240, overflow: "auto",
+        }}>
+          <div onClick={toggleAll} style={{
+            padding: "6px 10px", cursor: "pointer", fontSize: 11, color: T.inkMid,
+            borderBottom: `1px solid ${T.border}22`, display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <div style={{
+              width: 12, height: 12, borderRadius: 2, border: `1.5px solid ${allSelected ? T.teal : T.border}`,
+              background: allSelected ? T.teal : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              {allSelected && <span style={{ color: T.navy, fontSize: 9, fontWeight: 700 }}>✓</span>}
+            </div>
+            All types
+          </div>
+          {options.map(opt => {
+            const checked = selected.has(opt);
+            return (
+              <div key={opt} onClick={() => toggle(opt)} style={{
+                padding: "6px 10px", cursor: "pointer", fontSize: 11,
+                color: checked ? T.ink : T.inkMid,
+                background: checked ? `${T.teal}11` : "transparent",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                <div style={{
+                  width: 12, height: 12, borderRadius: 2, border: `1.5px solid ${checked ? T.teal : T.border}`,
+                  background: checked ? T.teal : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  {checked && <span style={{ color: T.navy, fontSize: 9, fontWeight: 700 }}>✓</span>}
+                </div>
+                {opt}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Congestion color helper ─────────────────────────────── */
 function congestionColor(score) {
   if (score >= 67) return T.red;
@@ -461,14 +563,13 @@ function PortLayer({ portMarkers, showPorts }) {
         </Circle>
       ))}
 
-      {/* Port center dots (pixel-based — zoom-independent) */}
+      {/* Port center anchors (pixel-based — zoom-independent) */}
       {portMarkers.map(p => (
-        <CircleMarker key={`port-dot-${p.name}`} center={p.coords}
-          radius={p.isMajor ? 6 : 4}
-          pathOptions={{
-            color: congestionColor(p.score), fillColor: congestionColor(p.score),
-            fillOpacity: 0.9, weight: p.isMajor ? 2 : 1,
-          }}
+        <Marker key={`port-dot-${p.name}`}
+          position={p.coords}
+          icon={getPortAnchorIcon(p.score)}
+          zIndexOffset={500}
+          interactive={false}
         />
       ))}
     </>
@@ -484,8 +585,9 @@ export default function VesselMap() {
   const { vessels, connected } = useVesselStream();
   const congestionPorts = usePortCongestion();
   const [selected, setSelected] = useState(null);
-  const [typeFilter, setTypeFilter] = useState(null);
+  const [typeFilters, setTypeFilters] = useState(() => new Set(VESSEL_TYPES));
   const [statusFilter, setStatusFilter] = useState(null);
+  const [congestionFilter, setCongestionFilter] = useState(null);
   const [showPorts, setShowPorts] = useState(true);
   const [selectedPort, setSelectedPort] = useState(null);
 
@@ -537,8 +639,27 @@ export default function VesselMap() {
     return { usVessels: usOnly, portVesselCounts: counts };
   }, [vessels]);
 
+  // STRESS_TEST: uncomment to simulate 10K vessels
+  // const stressVessels = useMemo(() => {
+  //   const result = [...usVessels];
+  //   const target = 10000;
+  //   let idx = 0;
+  //   while (result.length < target && usVessels.length > 0) {
+  //     const src = usVessels[idx % usVessels.length];
+  //     result.push({
+  //       ...src,
+  //       mmsi: src.mmsi + 100000 + result.length,
+  //       lat: src.lat + (Math.random() - 0.5) * 2,
+  //       lon: src.lon + (Math.random() - 0.5) * 2,
+  //     });
+  //     idx++;
+  //   }
+  //   return result;
+  // }, [usVessels]);
+  // To enable: replace `usVessels` with `stressVessels` in the filtered line below
+
   const filtered = usVessels.filter(v => {
-    if (typeFilter && v.vessel_type_label !== typeFilter) return false;
+    if (typeFilters.size < VESSEL_TYPES.length && !typeFilters.has(v.vessel_type_label)) return false;
     if (statusFilter && v.nav_status_label !== statusFilter) return false;
     return true;
   });
@@ -593,8 +714,9 @@ export default function VesselMap() {
         display: "flex", gap: 6,
       }}>
         <PortDropdown value={selectedPort} onChange={setSelectedPort} />
-        <FilterDropdown label="Vessel Type" value={typeFilter} options={VESSEL_TYPES} onChange={setTypeFilter} />
+        <MultiSelectDropdown label="Vessel Type" selected={typeFilters} options={VESSEL_TYPES} onChange={setTypeFilters} />
         <FilterDropdown label="Nav Status" value={statusFilter} options={NAV_STATUSES} onChange={setStatusFilter} />
+        <FilterDropdown label="Congestion" value={congestionFilter} options={["HIGH", "MEDIUM", "LOW"]} onChange={setCongestionFilter} />
         <button onClick={() => setShowPorts(p => !p)} style={{
           background: showPorts ? `${T.teal}22` : T.navy2,
           border: `1px solid ${showPorts ? T.teal : T.border}`,
@@ -666,33 +788,54 @@ export default function VesselMap() {
         <FlyToPort port={selectedPort} />
 
         {/* Port layer (owns zoom state — zoom changes only rerender ports, not vessels) */}
-        <PortLayer portMarkers={portMarkers} showPorts={showPorts} />
+        <PortLayer portMarkers={congestionFilter
+          ? portMarkers.filter(p => p.status === congestionFilter)
+          : portMarkers} showPorts={showPorts} />
 
-        {/* Vessel markers (CircleMarker — single canvas layer, smooth zoom) */}
-        {filtered.map(v => (
-          <CircleMarker
-            key={v.mmsi}
-            center={[v.lat, v.lon]}
-            radius={selected === v.mmsi ? 7 : 3}
-            pathOptions={{
-              color: getVesselColor(v),
-              fillColor: getVesselColor(v),
-              fillOpacity: selected === v.mmsi ? 1 : 0.7,
-              weight: selected === v.mmsi ? 2 : 1,
-            }}
-            eventHandlers={{
-              click: () => setSelected(v.mmsi === selected ? null : v.mmsi),
-            }}
-          >
-            <Tooltip direction="top" offset={[0, -6]} opacity={0.95}>
-              <div style={{ fontFamily: T.sans, fontSize: 11, lineHeight: 1.4 }}>
-                <strong>{v.name || "Unknown"}</strong><br />
-                {v.vessel_type_label || "Unknown"} · {v.sog ?? 0} kn<br />
-                {v.destination ? `→ ${v.destination}` : "No destination"}
-              </div>
-            </Tooltip>
-          </CircleMarker>
-        ))}
+        {/* Vessel markers — clustered, shaped divIcons per vessel type */}
+        <MarkerClusterGroup
+          disableClusteringAtZoom={10}
+          maxClusterRadius={60}
+          spiderfyOnMaxZoom={false}
+          showCoverageOnHover={false}
+          iconCreateFunction={(cluster) => {
+            const count = cluster.getChildCount();
+            const size = count < 50 ? 30 : count < 200 ? 38 : 46;
+            return L.divIcon({
+              html: `<div style="
+                width:${size}px;height:${size}px;
+                background:rgba(0,201,167,0.25);
+                border:2px solid ${T.teal};
+                border-radius:50%;
+                display:flex;align-items:center;justify-content:center;
+                font-family:${T.mono};font-size:${size < 38 ? 10 : 12}px;
+                font-weight:700;color:${T.teal};
+              ">${count}</div>`,
+              className: "",
+              iconSize: [size, size],
+              iconAnchor: [size / 2, size / 2],
+            });
+          }}
+        >
+          {filtered.map(v => (
+            <Marker
+              key={v.mmsi}
+              position={[v.lat, v.lon]}
+              icon={getVesselIcon(v.vessel_type_label || "Unknown", getVesselColor(v), selected === v.mmsi)}
+              eventHandlers={{
+                click: () => setSelected(v.mmsi === selected ? null : v.mmsi),
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -6]} opacity={0.95}>
+                <div style={{ fontFamily: T.sans, fontSize: 11, lineHeight: 1.4 }}>
+                  <strong>{v.name || "Unknown"}</strong><br />
+                  {v.vessel_type_label || "Unknown"} · {v.sog ?? 0} kn<br />
+                  {v.destination ? `→ ${v.destination}` : "No destination"}
+                </div>
+              </Tooltip>
+            </Marker>
+          ))}
+        </MarkerClusterGroup>
       </MapContainer>
 
       {/* Selected vessel panel */}

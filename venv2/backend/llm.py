@@ -296,26 +296,42 @@ def chat(
         response = llm.invoke(messages)
         raw = response.content.strip()
 
-        # Parse structured JSON response
         import json
+        import re
+
+        logger.info(f"Raw LLM response: {raw[:500]}")
+
         answer_text = raw
         sources = []
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                answer_text = parsed.get("answer", raw)
-                sources = parsed.get("sources", [])
-        except json.JSONDecodeError:
-            # Try to extract JSON from markdown code blocks
-            import re
+
+        def _try_parse(text):
+            """Try to parse JSON and extract answer+sources. Returns (answer, sources) or None."""
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict) and "answer" in parsed:
+                    return (parsed["answer"], parsed.get("sources", []))
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return None
+
+        # Attempt 1: direct JSON parse
+        result = _try_parse(raw)
+
+        # Attempt 2: JSON wrapped in markdown code fences
+        if result is None:
             json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
             if json_match:
-                try:
-                    parsed = json.loads(json_match.group(1))
-                    answer_text = parsed.get("answer", raw)
-                    sources = parsed.get("sources", [])
-                except json.JSONDecodeError:
-                    pass
+                result = _try_parse(json_match.group(1))
+
+        if result is not None:
+            answer_text, sources = result
+
+        # Final safety: if answer_text still looks like raw JSON, treat as plain text
+        stripped = answer_text.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            logger.warning("answer_text still looks like JSON — falling back to plain text")
+            answer_text = raw
+            sources = []
 
         # Update history with trimmed versions (omit bulky knowledge for memory efficiency)
         _history.append(HumanMessage(content=f"[Port: {port}] {question}"))
