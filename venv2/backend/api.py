@@ -300,6 +300,11 @@ def forecast(
     if model not in ALL_MODELS:
         raise HTTPException(400, f"model must be one of {ALL_MODELS}")
 
+    # Return cached result if available (cache key: port+model+horizon)
+    cache_key = f"forecast:{port}:{model}:{horizon}"
+    if cache_key in _cache:
+        return _cache[cache_key]
+
     df    = get_df()
     daily = get_port_daily_series(df, port)
     if daily.empty:
@@ -359,40 +364,13 @@ def forecast(
     hist["congestion_score"] = hist["congestion_score"].fillna(50.0).round(1)
     hist["portcalls_smooth"] = hist["portcalls"].rolling(3, min_periods=1).mean().round(2)
 
-    # ── Log predictions for ALL 3 models for validation later ────────────
-    # Always logs all models regardless of which one the user requested.
-    # This gives a complete comparison when actual data arrives.
+    # Log only the requested model's forecast (skip background fitting of other models)
     try:
-        # Always save the requested model first (already fitted above)
         save_forecast(port, model, fcst)
-
-        # Fit and save the other two models in the background
-        other_models = [m for m in ALL_MODELS if m != model]
-        for other in other_models:
-            try:
-                om = get_model(other)
-                if other == "XGBoost":
-                    try:
-                        chk_df = get_chokepoint_df()
-                        chk_data = {
-                            name: get_chokepoint_daily_series(chk_df, name)
-                            for name in LEADING_CHOKEPOINTS
-                            if name in chk_df["portname"].values
-                        }
-                        om.fit(daily, chokepoint_data=chk_data)
-                    except Exception:
-                        om.fit(daily)
-                else:
-                    om.fit(daily)
-                other_fcst = om.predict(horizon=horizon)
-                save_forecast(port, other, other_fcst)
-                logger.info(f"Forecast tracker: logged {other} predictions for {port}")
-            except Exception as e:
-                logger.warning(f"Forecast tracker: could not log {other} for {port}: {e}")
     except Exception as e:
         logger.warning(f"Forecast tracker save failed: {e}")
 
-    return {
+    result = {
         "port":        port,
         "model":       model,
         "horizon":     horizon,
@@ -400,6 +378,8 @@ def forecast(
         "history":     _df_to_records(hist),
         "forecast":    _df_to_records(fcst),
     }
+    _cache[cache_key] = result
+    return result
 
 
 @app.get("/api/model-comparison")
