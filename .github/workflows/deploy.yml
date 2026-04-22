@@ -14,8 +14,11 @@ jobs:
     steps:
       - name: Trigger Render backend deploy
         run: |
+          URL="${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+          echo "URL length: ${#URL}"
+          echo "URL starts with: ${URL:0:30}"
           HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
-            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" \
+            -X POST "$URL" \
             --retry 3 --retry-delay 5)
           echo "Response: $(cat /tmp/res.json)"
           [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || (echo "Render deploy failed: $HTTP_STATUS" && exit 1)
