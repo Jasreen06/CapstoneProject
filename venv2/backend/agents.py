@@ -44,6 +44,10 @@ class RiskState(TypedDict):
     incoming_72h: int                 # vessels underway with ETA ≤ 72h (live)
     queue_pressure: float             # anchor_count / (moored_count + 1)
     mega_vessel_count: int            # count of mega-vessels in the 72h window
+    vessel_analyst_note: str          # LLM-generated analyst briefing
+    vessel_anomalies: list            # detected anomalies (list of strings)
+    vessel_mix_summary: str           # vessel type composition analysis
+    vessel_confidence: str            # HIGH / MEDIUM / LOW
 
     # ── Port Congestion Agent outputs ─────────────────────────────────────────
     congestion_score: float           # 0 – 100 (z-score vs Prophet baseline)
@@ -286,6 +290,10 @@ def run_risk_assessment(port: str) -> dict:
         "incoming_72h":             0,
         "queue_pressure":           0.0,
         "mega_vessel_count":        0,
+        "vessel_analyst_note":      "",
+        "vessel_anomalies":         [],
+        "vessel_mix_summary":       "",
+        "vessel_confidence":        "LOW",
         # Congestion agent defaults
         "congestion_score":         50.0,
         "congestion_ratio":         1.0,

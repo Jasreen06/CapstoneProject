@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,9 +25,14 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DockWise AI — AIS Vessel Tracker", version="1.0")
 
+_ais_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173,http://localhost:8000",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:8000"],
+    allow_origins=_ais_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
