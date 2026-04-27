@@ -4,15 +4,20 @@ import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
-import { Ship, Wifi, WifiOff, RotateCcw, ChevronDown, Anchor, MapPin, Search } from "lucide-react";
+import { Ship, Wifi, WifiOff, RotateCcw, ChevronDown, Anchor, MapPin, Search, Navigation } from "lucide-react";
+import { haversineNM } from "./utils/geo";
+import { useTheme } from "./hooks/useTheme";
 
-/* ── Design tokens (match App.jsx) ────────────────────────── */
+/* ── Design tokens (match App.jsx — CSS custom properties) ── */
 const T = {
-  navy: "#0B1426", navy2: "#111D35", navy3: "#162140",
-  border: "#2A3F62", borderL: "#354D75",
-  teal: "#00C9A7", amber: "#F59E0B", red: "#EF4444",
-  green: "#10B981", blue: "#3B82F6",
-  ink: "#E8EFF8", inkMid: "#8FA3BF", inkDim: "#4A6080",
+  navy: "var(--bg-navy)", navy2: "var(--bg-navy2)", navy3: "var(--bg-navy3)",
+  border: "var(--border-color)", borderL: "var(--border-colorL)",
+  borderSubtle: "var(--border-subtle)", borderMedium: "var(--border-medium)",
+  teal: "var(--accent-teal)",
+  tealSubtle: "var(--teal-subtle)", tealFaint: "var(--teal-faint)", tealBorder: "var(--teal-border)",
+  amber: "#F59E0B", red: "#EF4444", green: "#10B981", blue: "#3B82F6",
+  ink: "var(--text-ink)", inkMid: "var(--text-inkMid)", inkDim: "var(--text-inkDim)",
+  navy2Overlay: "var(--navy2-overlay)",
   sans: "'Syne', sans-serif", mono: "'JetBrains Mono', monospace",
 };
 
@@ -66,6 +71,7 @@ for (const name of Object.keys(PORT_COORDS)) {
   }
 }
 Object.assign(_PORT_KEYWORDS, {
+  // Common abbreviations
   "la": "Los Angeles-Long Beach", "long beach": "Los Angeles-Long Beach",
   "lb": "Los Angeles-Long Beach", "la/lb": "Los Angeles-Long Beach",
   "nyc": "New York-New Jersey", "new york": "New York-New Jersey",
@@ -78,6 +84,36 @@ Object.assign(_PORT_KEYWORDS, {
   "mia": "Miami", "tpa": "Tampa", "hou": "Houston",
   "corpus": "Corpus Christi", "pt arthur": "Port Arthur",
   "lake chas": "Lake Charles", "norf": "Norfolk",
+  // UN/LOCODE 5-letter codes (US + 3-letter port code)
+  "uslax": "Los Angeles-Long Beach", "uslgb": "Los Angeles-Long Beach",
+  "usoak": "Oakland", "ussfo": "San Francisco",
+  "ussea": "Seattle", "ustac": "Tacoma",
+  "ussan": "San Diego", "ushue": "Port Hueneme",
+  "uspdx": "Portland, OR", "uslvw": "Longview",
+  "useve": "Everett", "usbli": "Bellingham",
+  "usanc": "Anchorage (Alaska)", "usdut": "Dutch Harbor",
+  "ushnl": "Honolulu", "usito": "Hilo",
+  "ushou": "Houston", "usnol": "New Orleans",
+  "usbtr": "Baton Rouge", "usbmt": "Beaumont",
+  "uspat": "Port Arthur", "uscrp": "Corpus Christi",
+  "usfpt": "Freeport", "usgls": "Galveston",
+  "ustxc": "Texas City", "uslch": "Lake Charles",
+  "usmob": "Mobile", "ustpa": "Tampa",
+  "usplv": "Port Lavaca", "usbro": "Brownsville",
+  "usgpt": "Gulfport", "uspgl": "Pascagoula",
+  "uspns": "Pensacola", "uspfn": "Panama City",
+  "usnyc": "New York-New Jersey", "usewr": "New York-New Jersey",
+  "usphl": "Philadelphia", "usbal": "Baltimore",
+  "usnor": "Norfolk", "usnnw": "Newport News",
+  "ussav": "Savannah", "uschs": "Charleston",
+  "usjax": "Jacksonville", "usmia": "Miami",
+  "uspef": "Port Everglades", "usccv": "Canaveral Harbor",
+  "usilm": "Wilmington, NC", "usbqk": "Brunswick",
+  "usbos": "Boston", "uspvd": "Providence",
+  "uspwm": "Portland, ME", "usmrh": "Marcus Hook",
+  "uschi": "Chicago", "usdet": "Detroit",
+  "uscle": "Cleveland", "ustol": "Toledo",
+  "usdlh": "Duluth", "usmke": "Milwaukee",
 });
 
 function resolveUSPort(destination) {
@@ -233,6 +269,32 @@ function usePortCongestion() {
   return ports;
 }
 
+/* ── Phase 6A.2 — live AIS coverage snapshot hook ─────────
+   Returns a {portname → "covered"|"sparse"|"dark"|"unavailable"} map.
+   Fails open: on error or empty response, returns {} so callers default
+   every port to "covered" (i.e. no dashed treatment). */
+function useCoverageSnapshot() {
+  const [coverage, setCoverage] = useState({});
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/api/coverage-snapshot`);
+        const data = await res.json();
+        if (mounted) setCoverage(data.coverage || {});
+      } catch (e) {
+        if (mounted) setCoverage({});
+      }
+    }
+    load();
+    const interval = setInterval(load, 60000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, []);
+
+  return coverage;
+}
+
 /* ── Reset view control ──────────────────────────────────── */
 function ResetView({ center, zoom }) {
   const map = useMap();
@@ -251,8 +313,64 @@ function ResetView({ center, zoom }) {
   );
 }
 
+/* ── Rerouting analysis helper ──────────────────────────── */
+function getReroutingAnalysis(vessel, portMarkers) {
+  const resolvedPort = resolveUSPort(vessel.destination);
+  if (!resolvedPort || resolvedPort === "__US_UNKNOWN__") {
+    return { status: "no_destination", resolvedPort: null, tier: null, alternatives: [] };
+  }
+
+  const destMarker = portMarkers.find(p => p.name === resolvedPort);
+  if (!destMarker) {
+    return { status: "no_data", resolvedPort, tier: null, alternatives: [] };
+  }
+
+  const tier = destMarker.status; // "HIGH", "MEDIUM", "LOW"
+  if (tier !== "HIGH") {
+    return { status: "ok", resolvedPort, tier, score: destMarker.score, alternatives: [] };
+  }
+
+  // HIGH congestion — find 3 nearest LOW/MEDIUM ports within 500nm
+  const MAX_REROUTE_NM = 500;
+  const candidates = portMarkers
+    .filter(p => p.name !== resolvedPort && (p.status === "LOW" || p.status === "MEDIUM"))
+    .map(p => ({
+      name: p.name,
+      tier: p.status,
+      score: p.score,
+      vesselCount: p.vesselCount,
+      distNM: Math.round(haversineNM(vessel.lat, vessel.lon, p.coords[0], p.coords[1])),
+      coords: p.coords,
+    }))
+    .filter(p => p.distNM <= MAX_REROUTE_NM)
+    .sort((a, b) => a.distNM - b.distNM)
+    .slice(0, 3);
+
+  return { status: "congested", resolvedPort, tier, score: destMarker.score, alternatives: candidates };
+}
+
+/* ── Congestion tier badge ──────────────────────────────── */
+function TierBadge({ tier, score }) {
+  const color = tier === "HIGH" ? T.red : tier === "MEDIUM" ? T.amber : T.green;
+  const label = tier === "HIGH" ? "Destination congested"
+    : tier === "MEDIUM" ? "Moderate congestion expected"
+    : "Destination clear — no rerouting needed";
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 6, padding: "6px 8px",
+      borderRadius: 6, background: `${color}18`, border: `1px solid ${color}44`,
+    }}>
+      <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+      <span style={{ fontSize: 11, color, fontWeight: 600 }}>{label}</span>
+      {score != null && (
+        <span style={{ fontSize: 10, color: T.inkDim, marginLeft: "auto" }}>{score.toFixed(0)}</span>
+      )}
+    </div>
+  );
+}
+
 /* ── Selected vessel side panel ──────────────────────────── */
-function VesselPanel({ vessel, onClose }) {
+function VesselPanel({ vessel, onClose, portMarkers, onFlyTo }) {
   if (!vessel) return null;
   const resolvedPort = resolveUSPort(vessel.destination);
   const fields = [
@@ -267,6 +385,9 @@ function VesselPanel({ vessel, onClose }) {
       : []),
     ["Position", `${vessel.lat?.toFixed(4)}, ${vessel.lon?.toFixed(4)}`],
   ];
+
+  const rerouting = getReroutingAnalysis(vessel, portMarkers);
+
   return (
     <div style={{
       position: "absolute", top: 0, right: 0, bottom: 0, width: 280, zIndex: 1000,
@@ -288,12 +409,222 @@ function VesselPanel({ vessel, onClose }) {
         {fields.map(([label, value]) => (
           <div key={label} style={{
             display: "flex", justifyContent: "space-between",
-            padding: "6px 0", borderBottom: `1px solid ${T.border}22`,
+            padding: "6px 0", borderBottom: `1px solid ${T.borderSubtle}`,
           }}>
             <span style={{ fontSize: 11, color: T.inkDim }}>{label}</span>
             <span style={{ fontSize: 11, color: T.ink, fontFamily: T.mono }}>{value}</span>
           </div>
         ))}
+      </div>
+
+      {/* ── Rerouting Analysis Section ── */}
+      <div style={{
+        padding: "10px 14px", borderTop: `1px solid ${T.border}`,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 700, color: T.inkMid, textTransform: "uppercase",
+          letterSpacing: "0.05em", marginBottom: 8,
+          display: "flex", alignItems: "center", gap: 5,
+        }}>
+          <Navigation size={11} /> Rerouting Analysis
+        </div>
+
+        {rerouting.status === "no_destination" && (
+          <div style={{ fontSize: 11, color: T.inkDim, fontStyle: "italic" }}>
+            No destination set — rerouting analysis unavailable.
+          </div>
+        )}
+        {rerouting.status === "no_data" && (
+          <div style={{ fontSize: 11, color: T.inkDim, fontStyle: "italic" }}>
+            Destination "{rerouting.resolvedPort}" — congestion data unavailable.
+          </div>
+        )}
+        {(rerouting.status === "ok" || rerouting.status === "congested") && (
+          <TierBadge tier={rerouting.tier} score={rerouting.score} />
+        )}
+
+        {rerouting.status === "congested" && rerouting.alternatives.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 10, color: T.inkDim, marginBottom: 6, fontWeight: 600 }}>
+              Suggested alternatives
+            </div>
+            {rerouting.alternatives.map(alt => (
+              <div
+                key={alt.name}
+                onClick={() => onFlyTo(alt.coords, alt.name)}
+                style={{
+                  display: "grid", gridTemplateColumns: "1fr auto auto auto",
+                  gap: 6, alignItems: "center",
+                  padding: "6px 8px", marginBottom: 3, borderRadius: 5,
+                  background: `${T.navy3}`, border: `1px solid ${T.borderMedium}`,
+                  cursor: "pointer", transition: "border-color 0.15s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = T.teal}
+                onMouseLeave={e => e.currentTarget.style.borderColor = T.borderMedium}
+              >
+                <span style={{ fontSize: 11, color: T.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {alt.name}
+                </span>
+                <span style={{ fontSize: 10, color: T.inkDim, fontFamily: T.mono }}>
+                  {alt.distNM} nm
+                </span>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 3,
+                  color: alt.tier === "LOW" ? T.green : T.amber,
+                  background: alt.tier === "LOW" ? `${T.green}18` : `${T.amber}18`,
+                }}>
+                  {alt.tier}
+                </span>
+                <span style={{ fontSize: 10, color: T.inkDim }}>
+                  {alt.vesselCount} in
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {rerouting.status === "congested" && rerouting.alternatives.length === 0 && (
+          <div style={{ fontSize: 11, color: T.inkDim, fontStyle: "italic", marginTop: 6 }}>
+            No viable alternatives nearby (&lt;500 nm).
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Port info side panel (2B) ──────────────────────────── */
+function deriveCoast(coords) {
+  const [lat, lon] = coords;
+  if (lon < -100) return "West Coast";
+  if (lat < 32 && lon >= -100 && lon <= -80) return "Gulf Coast";
+  return "East Coast";
+}
+
+function PortPanel({ portInfo, onClose }) {
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const profileCache = useRef({});
+
+  const name = portInfo?.name;
+
+  useEffect(() => {
+    if (!name) { setProfile(null); return; }
+    if (profileCache.current[name]) {
+      setProfile(profileCache.current[name]);
+      return;
+    }
+    setProfileLoading(true);
+    setProfile(null);
+    fetch(`${API_BASE}/api/port-profile/${encodeURIComponent(name)}`)
+      .then(res => {
+        if (!res.ok) throw new Error("not found");
+        return res.json();
+      })
+      .then(data => {
+        profileCache.current[name] = data;
+        setProfile(data);
+      })
+      .catch(() => setProfile(null))
+      .finally(() => setProfileLoading(false));
+  }, [name]);
+
+  if (!portInfo) return null;
+  const { coords, score, status, vesselCount } = portInfo;
+  const coast = deriveCoast(coords);
+  const tierColor = score >= 67 ? T.red : score >= 33 ? T.amber : T.green;
+  const trend = portInfo.trend;
+
+  return (
+    <div style={{
+      position: "absolute", top: 0, right: 0, bottom: 0, width: 280, zIndex: 1000,
+      background: T.navy2, borderLeft: `1px solid ${T.border}`,
+      display: "flex", flexDirection: "column", overflow: "auto",
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: "12px 14px", borderBottom: `1px solid ${T.border}`,
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+      }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: T.ink }}>{name}</div>
+          <div style={{ fontSize: 10, color: T.inkDim, marginTop: 2 }}>{coast}</div>
+        </div>
+        <button onClick={onClose} style={{
+          background: "none", border: "none", color: T.inkMid, cursor: "pointer", fontSize: 18,
+        }}>&times;</button>
+      </div>
+
+      {/* Congestion stats */}
+      <div style={{ padding: "10px 14px" }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "8px 10px",
+          borderRadius: 6, background: `${tierColor}18`, border: `1px solid ${tierColor}44`,
+          marginBottom: 10,
+        }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: tierColor }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: tierColor }}>{status}</span>
+          <span style={{ fontSize: 11, color: T.ink, marginLeft: "auto", fontFamily: T.mono }}>
+            {score.toFixed(0)}/100
+          </span>
+        </div>
+
+        {[
+          ["Congestion Score", `${score.toFixed(1)}`],
+          ["Congestion Tier", status],
+          ["Inbound Vessels", `${vesselCount}`],
+          ...(trend ? [["7-Day Trend", trend]] : []),
+        ].map(([label, value]) => (
+          <div key={label} style={{
+            display: "flex", justifyContent: "space-between",
+            padding: "6px 0", borderBottom: `1px solid ${T.borderSubtle}`,
+          }}>
+            <span style={{ fontSize: 11, color: T.inkDim }}>{label}</span>
+            <span style={{
+              fontSize: 11, fontFamily: T.mono,
+              color: label === "7-Day Trend"
+                ? (value === "rising" ? T.red : value === "falling" ? T.green : T.inkMid)
+                : T.ink,
+            }}>
+              {label === "7-Day Trend" ? (value === "rising" ? "Rising" : value === "falling" ? "Falling" : "Stable") : value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Port Profile */}
+      <div style={{
+        padding: "10px 14px", borderTop: `1px solid ${T.border}`,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 700, color: T.inkMid, textTransform: "uppercase",
+          letterSpacing: "0.05em", marginBottom: 8,
+          display: "flex", alignItems: "center", gap: 5,
+        }}>
+          <Anchor size={11} /> Port Profile
+        </div>
+
+        {profileLoading && (
+          <div style={{ fontSize: 11, color: T.inkDim, fontStyle: "italic" }}>Loading...</div>
+        )}
+        {!profileLoading && !profile && (
+          <div style={{ fontSize: 11, color: T.inkDim, fontStyle: "italic" }}>
+            Profile not available for this port.
+          </div>
+        )}
+        {!profileLoading && profile && (
+          <>
+            <p style={{ fontSize: 11, color: T.ink, lineHeight: 1.6, margin: "0 0 8px 0" }}>
+              {profile.profile}
+            </p>
+            {profile.notable && profile.notable.length > 0 && (
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                {profile.notable.map((fact, i) => (
+                  <li key={i} style={{ fontSize: 10, color: T.inkMid, lineHeight: 1.6 }}>{fact}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -319,13 +650,13 @@ function FilterDropdown({ label, value, options, onChange }) {
         }}>
           <div onClick={() => { onChange(null); setOpen(false); }} style={{
             padding: "6px 10px", cursor: "pointer", fontSize: 11, color: T.inkMid,
-            borderBottom: `1px solid ${T.border}22`,
+            borderBottom: `1px solid ${T.borderSubtle}`,
           }}>All</div>
           {options.map(opt => (
             <div key={opt} onClick={() => { onChange(opt); setOpen(false); }} style={{
               padding: "6px 10px", cursor: "pointer", fontSize: 11,
               color: value === opt ? T.teal : T.ink,
-              background: value === opt ? `${T.teal}11` : "transparent",
+              background: value === opt ? T.tealFaint : "transparent",
             }}>{opt}</div>
           ))}
         </div>
@@ -367,7 +698,7 @@ function MultiSelectDropdown({ label, selected, options, onChange }) {
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button onClick={() => setOpen(!open)} style={{
-        background: !allSelected && selected.size > 0 ? `${T.teal}22` : T.navy2,
+        background: !allSelected && selected.size > 0 ? T.tealSubtle : T.navy2,
         border: `1px solid ${!allSelected && selected.size > 0 ? T.teal : T.border}`,
         borderRadius: 6, color: !allSelected && selected.size > 0 ? T.teal : T.inkMid,
         cursor: "pointer", padding: "5px 10px",
@@ -383,7 +714,7 @@ function MultiSelectDropdown({ label, selected, options, onChange }) {
         }}>
           <div onClick={toggleAll} style={{
             padding: "6px 10px", cursor: "pointer", fontSize: 11, color: T.inkMid,
-            borderBottom: `1px solid ${T.border}22`, display: "flex", alignItems: "center", gap: 6,
+            borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", alignItems: "center", gap: 6,
           }}>
             <div style={{
               width: 12, height: 12, borderRadius: 2, border: `1.5px solid ${allSelected ? T.teal : T.border}`,
@@ -399,7 +730,7 @@ function MultiSelectDropdown({ label, selected, options, onChange }) {
               <div key={opt} onClick={() => toggle(opt)} style={{
                 padding: "6px 10px", cursor: "pointer", fontSize: 11,
                 color: checked ? T.ink : T.inkMid,
-                background: checked ? `${T.teal}11` : "transparent",
+                background: checked ? T.tealFaint : "transparent",
                 display: "flex", alignItems: "center", gap: 6,
               }}>
                 <div style={{
@@ -453,7 +784,7 @@ function PortDropdown({ value, onChange }) {
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button onClick={() => setOpen(!open)} style={{
-        background: value ? `${T.teal}22` : T.navy2,
+        background: value ? T.tealSubtle : T.navy2,
         border: `1px solid ${value ? T.teal : T.border}`,
         borderRadius: 6, color: value ? T.teal : T.inkMid,
         cursor: "pointer", padding: "5px 10px", fontSize: 11, fontFamily: T.sans,
@@ -471,7 +802,7 @@ function PortDropdown({ value, onChange }) {
           background: T.navy2, border: `1px solid ${T.border}`, borderRadius: 6,
           width: 220, maxHeight: 280, display: "flex", flexDirection: "column",
         }}>
-          <div style={{ padding: "6px 8px", borderBottom: `1px solid ${T.border}22`, display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ padding: "6px 8px", borderBottom: `1px solid ${T.borderSubtle}`, display: "flex", alignItems: "center", gap: 4 }}>
             <Search size={10} color={T.inkDim} />
             <input
               autoFocus
@@ -487,13 +818,13 @@ function PortDropdown({ value, onChange }) {
           <div style={{ overflow: "auto", flex: 1 }}>
             <div onClick={() => { onChange(null); setOpen(false); setSearch(""); }} style={{
               padding: "6px 10px", cursor: "pointer", fontSize: 11, color: T.inkMid,
-              borderBottom: `1px solid ${T.border}22`,
+              borderBottom: `1px solid ${T.borderSubtle}`,
             }}>All (Reset View)</div>
             {filtered.map(port => (
               <div key={port} onClick={() => { onChange(port); setOpen(false); setSearch(""); }} style={{
                 padding: "6px 10px", cursor: "pointer", fontSize: 11,
                 color: value === port ? T.teal : T.ink,
-                background: value === port ? `${T.teal}11` : "transparent",
+                background: value === port ? T.tealFaint : "transparent",
               }}>
                 {MAJOR_PORTS.has(port) ? "★ " : ""}{port}
               </div>
@@ -503,6 +834,13 @@ function PortDropdown({ value, onChange }) {
       )}
     </div>
   );
+}
+
+/* ── MapRefSetter — captures map instance into a ref ────── */
+function MapRefSetter({ mapRef }) {
+  const map = useMap();
+  useEffect(() => { mapRef.current = map; }, [map, mapRef]);
+  return null;
 }
 
 /* ── FlyToPort — responds to selectedPort state ──────────── */
@@ -533,24 +871,30 @@ const US_CENTER = [37.5, -96.0];
 const US_ZOOM = 4;
 
 /* ── Port layer (static radii — no zoom state, no rerender on zoom) ── */
-function PortLayer({ portMarkers, showPorts }) {
+function PortLayer({ portMarkers, showPorts, onPortClick }) {
   if (!showPorts) return null;
   return (
     <>
-      {/* Sonar pulse markers for HIGH congestion ports */}
-      {portMarkers.filter(p => p.score >= 67).map(p => (
+      {/* Sonar pulse markers for HIGH congestion ports — suppressed on unverified */}
+      {portMarkers.filter(p => p.score >= 67 && !p.isUnverified).map(p => (
         <Marker key={`pulse-${p.name}`} position={p.coords} icon={_pulseIcon}
           zIndexOffset={-1000} interactive={false} />
       ))}
 
-      {/* Port congestion circles — fixed meter radius, Leaflet handles zoom natively */}
+      {/* Port congestion circles — fixed meter radius, Leaflet handles zoom natively.
+          Phase 6A.2: ports with unverified coverage render dashed + ghosted. */}
       {portMarkers.map(p => (
         <Circle key={`port-${p.name}`} center={p.coords}
           radius={p.baseRadius}
           pathOptions={{
             color: congestionColor(p.score), fillColor: congestionFill(p.score),
-            fillOpacity: 0.5, weight: 1.5,
-            dashArray: p.score >= 67 ? "" : "4 3",
+            fillOpacity: p.isUnverified ? 0.15 : 0.5,
+            weight: p.isUnverified ? 1 : 1.5,
+            dashArray: p.isUnverified ? "8 6" : (p.score >= 67 ? "" : "4 3"),
+            opacity: p.isUnverified ? 0.7 : 1,
+          }}
+          eventHandlers={{
+            click: () => onPortClick && onPortClick(p),
           }}
         >
           <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
@@ -558,6 +902,11 @@ function PortLayer({ portMarkers, showPorts }) {
               <strong>{p.name}</strong><br />
               Congestion: <span style={{ color: congestionColor(p.score), fontWeight: 700 }}>{p.status}</span> ({p.score.toFixed(0)})<br />
               Inbound vessels: <strong>{p.vesselCount}</strong>
+              {p.isUnverified && (
+                <><br /><span style={{ color: T.inkDim, fontStyle: "italic" }}>
+                  Live AIS coverage: {p.coverage}
+                </span></>
+              )}
             </div>
           </Tooltip>
         </Circle>
@@ -569,7 +918,9 @@ function PortLayer({ portMarkers, showPorts }) {
           position={p.coords}
           icon={getPortAnchorIcon(p.score)}
           zIndexOffset={500}
-          interactive={false}
+          eventHandlers={{
+            click: () => onPortClick && onPortClick(p),
+          }}
         />
       ))}
     </>
@@ -584,12 +935,16 @@ const NAV_STATUSES = ["Under Way Using Engine", "At Anchor", "Moored", "Engaged 
 export default function VesselMap() {
   const { vessels, connected } = useVesselStream();
   const congestionPorts = usePortCongestion();
+  const coverageMap     = useCoverageSnapshot();
+  const { isDark } = useTheme();
   const [selected, setSelected] = useState(null);
   const [typeFilters, setTypeFilters] = useState(() => new Set(VESSEL_TYPES));
   const [statusFilter, setStatusFilter] = useState(null);
   const [congestionFilter, setCongestionFilter] = useState(null);
   const [showPorts, setShowPorts] = useState(true);
   const [selectedPort, setSelectedPort] = useState(null);
+  const [selectedPortInfo, setSelectedPortInfo] = useState(null); // for port sidebar (2B)
+  const mapRef = useRef(null);
 
   // Inject pulse animation CSS
   useEffect(() => {
@@ -658,11 +1013,11 @@ export default function VesselMap() {
   // }, [usVessels]);
   // To enable: replace `usVessels` with `stressVessels` in the filtered line below
 
-  const filtered = usVessels.filter(v => {
+  const filtered = useMemo(() => usVessels.filter(v => {
     if (typeFilters.size < VESSEL_TYPES.length && !typeFilters.has(v.vessel_type_label)) return false;
     if (statusFilter && v.nav_status_label !== statusFilter) return false;
     return true;
-  });
+  }), [usVessels, typeFilters, statusFilter]);
 
   const selectedVessel = selected ? usVessels.find(v => v.mmsi === selected) : null;
 
@@ -682,17 +1037,54 @@ export default function VesselMap() {
       const baseRadius = isMajor
         ? Math.min(8000 + vesselCount * 500, 30000)
         : Math.min(3000 + vesselCount * 400, 25000);
-      markers.push({ name, coords, vesselCount, score, status, baseRadius, isMajor });
+      // Phase 6A.2 — coverage classification (default "covered" if snapshot
+      // missing or empty: fail-open so a backend hiccup doesn't ghost the map).
+      const coverage = coverageMap[name] || "covered";
+      const isUnverified = coverage === "dark" || coverage === "sparse" || coverage === "unavailable";
+      markers.push({ name, coords, vesselCount, score, status, baseRadius, isMajor, coverage, isUnverified });
     }
     return markers;
-  }, [congestionPorts, portVesselCounts]);
+  }, [congestionPorts, portVesselCounts, coverageMap]);
+
+  // Fly-to handler for rerouting alternatives and port clicks
+  const handleFlyTo = useCallback((coords, portName) => {
+    if (mapRef.current) {
+      mapRef.current.flyTo(coords, 10, { duration: 1.2 });
+    }
+  }, []);
+
+  // Stable cluster icon factory — avoids MarkerClusterGroup re-init on every render
+  const clusterIconCreate = useCallback((cluster) => {
+    const count = cluster.getChildCount();
+    const size = count < 50 ? 30 : count < 200 ? 38 : 46;
+    return L.divIcon({
+      html: `<div style="
+        width:${size}px;height:${size}px;
+        background:var(--teal-subtle);
+        border:2px solid var(--accent-teal);
+        border-radius:50%;
+        display:flex;align-items:center;justify-content:center;
+        font-family:${T.mono};font-size:${size < 38 ? 10 : 12}px;
+        font-weight:700;color:${T.teal};
+      ">${count}</div>`,
+      className: "",
+      iconSize: [size, size],
+      iconAnchor: [size / 2, size / 2],
+    });
+  }, []);
+
+  // Stable port-click handler — avoids PortLayer re-render from new function ref
+  const handlePortClick = useCallback((p) => {
+    setSelectedPortInfo(p);
+    setSelected(null);
+  }, []);
 
   return (
     <div style={{ height: "100%", position: "relative", background: T.navy }}>
       {/* Stats overlay */}
       <div style={{
         position: "absolute", top: 12, left: 12, zIndex: 1000,
-        background: `${T.navy2}ee`, border: `1px solid ${T.border}`,
+        background: T.navy2Overlay, border: `1px solid ${T.border}`,
         borderRadius: 8, padding: "8px 12px", display: "flex", gap: 16,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -718,7 +1110,7 @@ export default function VesselMap() {
         <FilterDropdown label="Nav Status" value={statusFilter} options={NAV_STATUSES} onChange={setStatusFilter} />
         <FilterDropdown label="Congestion" value={congestionFilter} options={["HIGH", "MEDIUM", "LOW"]} onChange={setCongestionFilter} />
         <button onClick={() => setShowPorts(p => !p)} style={{
-          background: showPorts ? `${T.teal}22` : T.navy2,
+          background: showPorts ? T.tealSubtle : T.navy2,
           border: `1px solid ${showPorts ? T.teal : T.border}`,
           borderRadius: 6, color: showPorts ? T.teal : T.inkMid,
           cursor: "pointer", padding: "5px 10px", fontSize: 11, fontFamily: T.sans,
@@ -731,7 +1123,7 @@ export default function VesselMap() {
       {/* Legend */}
       <div style={{
         position: "absolute", bottom: 12, left: 12, zIndex: 1000,
-        background: `${T.navy2}ee`, border: `1px solid ${T.border}`,
+        background: T.navy2Overlay, border: `1px solid ${T.border}`,
         borderRadius: 8, padding: "8px 12px", maxWidth: 560,
       }}>
         <div style={{ fontSize: 10, color: T.inkDim, marginBottom: 6, fontWeight: 700 }}>Vessel Types</div>
@@ -781,16 +1173,20 @@ export default function VesselMap() {
         maxZoom={14}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          key={isDark ? "dark-tiles" : "light-tiles"}
+          url={isDark
+            ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"}
           attribution='&copy; <a href="https://carto.com/">CARTO</a>'
         />
+        <MapRefSetter mapRef={mapRef} />
         <ResetView center={US_CENTER} zoom={US_ZOOM} />
         <FlyToPort port={selectedPort} />
 
         {/* Port layer (owns zoom state — zoom changes only rerender ports, not vessels) */}
         <PortLayer portMarkers={congestionFilter
           ? portMarkers.filter(p => p.status === congestionFilter)
-          : portMarkers} showPorts={showPorts} />
+          : portMarkers} showPorts={showPorts} onPortClick={handlePortClick} />
 
         {/* Vessel markers — clustered, shaped divIcons per vessel type */}
         <MarkerClusterGroup
@@ -798,24 +1194,7 @@ export default function VesselMap() {
           maxClusterRadius={60}
           spiderfyOnMaxZoom={false}
           showCoverageOnHover={false}
-          iconCreateFunction={(cluster) => {
-            const count = cluster.getChildCount();
-            const size = count < 50 ? 30 : count < 200 ? 38 : 46;
-            return L.divIcon({
-              html: `<div style="
-                width:${size}px;height:${size}px;
-                background:rgba(0,201,167,0.25);
-                border:2px solid ${T.teal};
-                border-radius:50%;
-                display:flex;align-items:center;justify-content:center;
-                font-family:${T.mono};font-size:${size < 38 ? 10 : 12}px;
-                font-weight:700;color:${T.teal};
-              ">${count}</div>`,
-              className: "",
-              iconSize: [size, size],
-              iconAnchor: [size / 2, size / 2],
-            });
-          }}
+          iconCreateFunction={clusterIconCreate}
         >
           {filtered.map(v => (
             <Marker
@@ -823,7 +1202,10 @@ export default function VesselMap() {
               position={[v.lat, v.lon]}
               icon={getVesselIcon(v.vessel_type_label || "Unknown", getVesselColor(v), selected === v.mmsi)}
               eventHandlers={{
-                click: () => setSelected(v.mmsi === selected ? null : v.mmsi),
+                click: () => {
+                  setSelected(v.mmsi === selected ? null : v.mmsi);
+                  setSelectedPortInfo(null); // close port panel
+                },
               }}
             >
               <Tooltip direction="top" offset={[0, -6]} opacity={0.95}>
@@ -839,7 +1221,10 @@ export default function VesselMap() {
       </MapContainer>
 
       {/* Selected vessel panel */}
-      <VesselPanel vessel={selectedVessel} onClose={() => setSelected(null)} />
+      <VesselPanel vessel={selectedVessel} onClose={() => setSelected(null)} portMarkers={portMarkers} onFlyTo={handleFlyTo} />
+
+      {/* Selected port panel */}
+      <PortPanel portInfo={selectedPortInfo} onClose={() => setSelectedPortInfo(null)} />
     </div>
   );
 }

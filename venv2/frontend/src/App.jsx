@@ -9,35 +9,47 @@ import {
   Anchor, TrendingUp, TrendingDown, Minus,
   ChevronDown, AlertTriangle, CheckCircle, Clock, Ship,
   Calendar, Navigation, Zap, Info, MessageSquare, Send, RotateCcw,
+  Sun, Moon,
 } from "lucide-react";
-import { usePortList, useOverview, useForecast, useTopPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
+import { usePortList, useOverview, useForecast, useTopPorts, useTopLoadedPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
+import { useTheme } from "./hooks/useTheme";
 import VesselMap from "./VesselMap";
+import Briefing from "./components/advisor/Briefing";
+import ScenarioSimulator from "./components/advisor/ScenarioSimulator";
+import PortComparison from "./components/advisor/PortComparison";
+import NearbyPortOutlook from "./components/advisor/NearbyPortOutlook";
 
 /* ─────────────────────────────────────────────────────────
    DESIGN TOKENS
 ───────────────────────────────────────────────────────── */
 const T = {
-  navy:    "#0B1426",
-  navy2:   "#111D35",
-  navy3:   "#162140",
-  slate:   "#1E2D4A",
-  slateL:  "#253659",
-  border:  "#2A3F62",
-  borderL: "#354D75",
-  teal:    "#00C9A7",
-  tealD:   "#00A087",
-  tealBg:  "rgba(0,201,167,0.08)",
+  navy:    "var(--bg-navy)",
+  navy2:   "var(--bg-navy2)",
+  navy3:   "var(--bg-navy3)",
+  slate:   "var(--bg-slate)",
+  slateL:  "var(--bg-slateL)",
+  border:  "var(--border-color)",
+  borderL: "var(--border-colorL)",
+  borderSubtle: "var(--border-subtle)",
+  borderMedium: "var(--border-medium)",
+  teal:    "var(--accent-teal)",
+  tealD:   "var(--accent-tealD)",
+  tealBg:  "var(--teal-bg)",
+  tealSubtle: "var(--teal-subtle)",
+  tealFaint:  "var(--teal-faint)",
+  tealBorder: "var(--teal-border)",
   amber:   "#F59E0B",
-  amberBg: "rgba(245,158,11,0.1)",
+  amberBg: "var(--amber-bg)",
   red:     "#EF4444",
-  redBg:   "rgba(239,68,68,0.08)",
+  redBg:   "var(--red-bg)",
   green:   "#10B981",
-  greenBg: "rgba(16,185,129,0.08)",
+  greenBg: "var(--green-bg)",
   blue:    "#3B82F6",
-  blueBg:  "rgba(59,130,246,0.08)",
-  ink:     "#E8EFF8",
-  inkMid:  "#8FA3BF",
-  inkDim:  "#4A6080",
+  blueBg:  "var(--blue-bg)",
+  ink:     "var(--text-ink)",
+  inkMid:  "var(--text-inkMid)",
+  inkDim:  "var(--text-inkDim)",
+  navy2Overlay: "var(--navy2-overlay)",
   mono:    "'JetBrains Mono', monospace",
   sans:    "'Syne', sans-serif",
 };
@@ -102,17 +114,24 @@ function Spinner() {
   );
 }
 
-function RiskPill({ level }) {
+function RiskPill({ level, unverified = false }) {
   const cfg = RISK_CFG[level] || RISK_CFG.LOW;
   const Icon = cfg.icon;
+  // Phase 6A.2 — unverified variant: outlined-dashed, no fill, hue preserved.
+  // Note: width-constrained header pill — caller suppresses the "· UNVERIFIED"
+  // suffix. Wider callers (forecast cards) append the suffix themselves.
   return (
     <span style={{
       display:"inline-flex", alignItems:"center", gap:5,
       padding:"3px 10px", borderRadius:99,
-      background: cfg.bg, color: cfg.color,
+      background: unverified ? "transparent" : cfg.bg,
+      color: cfg.color,
       fontSize:11, fontWeight:700, letterSpacing:"0.04em",
-      border:`1px solid ${cfg.color}33`,
+      border: unverified
+        ? `1px dashed ${cfg.color}88`
+        : `1px solid ${cfg.color}33`,
       textTransform:"uppercase",
+      opacity: unverified ? 0.85 : 1,
     }}>
       <Icon size={11} />
       {cfg.label}
@@ -245,12 +264,50 @@ function CongestionHero({ kpi }) {
   const cfg   = RISK_CFG[level] || RISK_CFG.LOW;
   const lag   = kpi?.data_lag_days ?? 0;
 
+  // Phase 6A — staleness reconciliation
+  const tierAdjusted    = kpi?.tier_adjusted === true;
+  const portwatchTier   = kpi?.portwatch_tier;
+  const adjustReason    = kpi?.tier_adjustment_reason;
+  const liveUnavailable = kpi?.live_data_available === false;
+  // Phase 6A.1 — spatial coverage classification
+  const liveCoverage    = kpi?.live_coverage; // "covered" | "sparse" | "dark" | "unavailable" | null
+  // Phase 6A.2 — visual unverified state when live coverage cannot validate
+  // the displayed tier. We dash the gauge fill and ghost the score number.
+  const isUnverified =
+    liveCoverage === "dark" ||
+    liveCoverage === "sparse" ||
+    liveCoverage === "unavailable";
+
   // Semicircle gauge
   const R = 54, cx = 64, cy = 62;
   const pLen  = Math.PI * R;
   const fill  = (Math.min(100, Math.max(0, score)) / 100) * pLen;
 
   return (
+    <div style={{ display:"flex", flexDirection:"column", gap:"0.5rem" }}>
+      {tierAdjusted && (
+        <div style={{
+          display:"flex", alignItems:"flex-start", gap:"0.6rem",
+          padding:"0.6rem 0.9rem",
+          background: T.amberBg,
+          border: `1px solid ${T.amber}55`,
+          borderRadius: 8,
+          fontSize: 12, color: T.ink, lineHeight: 1.4,
+        }}>
+          <AlertTriangle size={14} color={T.amber} style={{ flexShrink:0, marginTop:1 }} />
+          <div>
+            <div style={{ fontWeight:700, color: T.amber, marginBottom:2 }}>
+              Tier adjusted using live AIS
+            </div>
+            <div style={{ color: T.inkMid }}>{adjustReason}</div>
+            {portwatchTier && portwatchTier !== level && (
+              <div style={{ fontSize:11, color: T.inkDim, marginTop:3 }}>
+                PortWatch tier (historical): <strong style={{ color: T.inkMid }}>{portwatchTier}</strong>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     <Card style={{ padding:"1.25rem 1.5rem", display:"flex", alignItems:"center", gap:"1.5rem" }}>
       {/* Gauge */}
       <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
@@ -258,17 +315,18 @@ function CongestionHero({ kpi }) {
           {/* track segments: LOW zone */}
           <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
             fill="none" stroke={T.border} strokeWidth={10} strokeLinecap="butt" />
-          {/* colored fill */}
+          {/* colored fill — dashed + ghosted when live AIS can't verify the tier */}
           <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
             fill="none" stroke={cfg.color} strokeWidth={10} strokeLinecap="butt"
-            strokeDasharray={`${fill} ${pLen}`}
-            style={{ transition:"stroke-dasharray 0.7s ease, stroke 0.4s ease" }} />
+            strokeDasharray={isUnverified ? "5 4" : `${fill} ${pLen}`}
+            opacity={isUnverified ? 0.55 : 1}
+            style={{ transition:"stroke-dasharray 0.7s ease, stroke 0.4s ease, opacity 0.3s ease" }} />
           <text x={cx} y={cy-4} textAnchor="middle" fontSize={22} fontWeight={800}
-            fontFamily={T.sans} fill={T.ink}>{Math.round(score)}</text>
+            fontFamily={T.sans} fill={isUnverified ? T.inkMid : T.ink}>{Math.round(score)}</text>
           <text x={cx} y={cy+12} textAnchor="middle" fontSize={9} fontWeight={600}
             fontFamily={T.sans} fill={T.inkMid} letterSpacing="0.1em">CONGESTION</text>
         </svg>
-        <RiskPill level={level} />
+        <RiskPill level={level} unverified={isUnverified} />
       </div>
 
       {/* Info column */}
@@ -322,31 +380,65 @@ function CongestionHero({ kpi }) {
               <Clock size={12} />
               {lag === 0 ? "Up to date" : `${lag}d behind real-time`}
             </div>
+            {liveUnavailable && lag > 7 && (
+              <div style={{ fontSize:10, color: T.inkDim, marginTop:3, fontStyle:"italic" }}>
+                Live AIS unavailable — tier reflects PortWatch only
+              </div>
+            )}
+            {liveCoverage === "sparse" && (
+              <div
+                title="Live AIS shows few vessels near this port. The displayed tier is based on PortWatch arrivals data only."
+                style={{ fontSize:10, color: T.inkMid, marginTop:3, padding:"2px 6px",
+                  background: T.navy3, border: `1px solid ${T.border}`, borderRadius: 4,
+                  display:"inline-block", cursor:"help" }}>
+                Limited live coverage
+              </div>
+            )}
+            {liveCoverage === "dark" && (
+              <div
+                title="No live AIS vessels detected near this port. Common for inland ports outside coastal AIS reception. Tier is based on PortWatch arrivals data only and has not been validated against live conditions."
+                style={{ fontSize:10, color: T.inkMid, marginTop:3, padding:"2px 6px",
+                  background: T.navy3, border: `1px solid ${T.border}`, borderRadius: 4,
+                  display:"inline-block", cursor:"help" }}>
+                Live coverage unavailable
+              </div>
+            )}
           </div>
         </div>
       </div>
     </Card>
+    </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────────
    7-DAY CONGESTION OUTLOOK CARDS  (weather-app style)
 ───────────────────────────────────────────────────────── */
-function CongestionDayCard({ row, isHighest, isLowest, isFirst }) {
+function CongestionDayCard({ row, isHighest, isLowest, isFirst, isUnverified = false }) {
   const score  = row.congestion_score ?? 50;
   const level  = row.congestion_level || (score >= 67 ? "HIGH" : score >= 33 ? "MEDIUM" : "LOW");
   const clr    = congestionColor(score);
   const dateStr= row.ds || row.date || "";
 
+  // Phase 6A.2 — when live AIS coverage can't validate the tier, render the
+  // forecast card neutrally: no AVOID/BEST badge, dashed border + ring,
+  // outlined level pill, and a "· UNVERIFIED" suffix on the level label
+  // (this caller has horizontal room; the header pill does not).
+  const cardBg     = isUnverified ? T.navy3 : (isHighest ? T.redBg : isLowest ? T.greenBg : T.navy3);
+  const cardBorder = isUnverified
+    ? `1px dashed ${T.borderL}`
+    : `1px solid ${isHighest ? T.red+"44" : isLowest ? T.green+"44" : T.border}`;
+
   return (
     <div style={{
       flex:1, minWidth:0,
-      background: isHighest ? T.redBg : isLowest ? T.greenBg : T.navy3,
-      border: `1px solid ${isHighest ? T.red+"44" : isLowest ? T.green+"44" : T.border}`,
+      background: cardBg,
+      border: cardBorder,
       borderRadius:10, padding:"0.9rem 0.6rem",
       display:"flex", flexDirection:"column", alignItems:"center", gap:6,
       transition:"background 0.2s",
       position:"relative",
+      opacity: isUnverified ? 0.85 : 1,
     }}>
       {isFirst && (
         <div style={{
@@ -368,24 +460,28 @@ function CongestionDayCard({ row, isHighest, isLowest, isFirst }) {
       <svg width={52} height={52} viewBox="0 0 52 52">
         <circle cx={26} cy={26} r={20} fill="none" stroke={T.border} strokeWidth={4} />
         <circle cx={26} cy={26} r={20} fill="none" stroke={clr} strokeWidth={4}
-          strokeDasharray={`${(score / 100) * 125.6} 125.6`}
+          strokeDasharray={isUnverified ? "4 3" : `${(score / 100) * 125.6} 125.6`}
           strokeDashoffset={31.4}
           strokeLinecap="round"
-          style={{ transition:"stroke-dasharray 0.6s ease" }} />
+          opacity={isUnverified ? 0.55 : 1}
+          style={{ transition:"stroke-dasharray 0.6s ease, opacity 0.3s ease" }} />
         <text x={26} y={31} textAnchor="middle" fontSize={13} fontWeight={800}
-          fontFamily={T.sans} fill={T.ink}>{Math.round(score)}</text>
+          fontFamily={T.sans} fill={isUnverified ? T.inkMid : T.ink}>{Math.round(score)}</text>
       </svg>
 
       <div style={{
         fontSize:9, fontWeight:700, letterSpacing:"0.06em",
         color: clr, textTransform:"uppercase",
-        padding:"2px 6px", borderRadius:4, background:`${clr}18`,
+        padding:"2px 6px", borderRadius:4,
+        background: isUnverified ? "transparent" : `${clr}18`,
+        border: isUnverified ? `1px dashed ${clr}88` : "none",
+        whiteSpace:"nowrap",
       }}>
-        {level}
+        {level}{isUnverified ? " · UNVERIFIED" : ""}
       </div>
 
-      {isHighest && <div style={{ fontSize:8, color: T.red, fontWeight:700, letterSpacing:"0.05em" }}>⚠ AVOID</div>}
-      {isLowest  && <div style={{ fontSize:8, color: T.green, fontWeight:700, letterSpacing:"0.05em" }}>✓ BEST</div>}
+      {!isUnverified && isHighest && <div style={{ fontSize:8, color: T.red, fontWeight:700, letterSpacing:"0.05em" }}>⚠ AVOID</div>}
+      {!isUnverified && isLowest  && <div style={{ fontSize:8, color: T.green, fontWeight:700, letterSpacing:"0.05em" }}>✓ BEST</div>}
     </div>
   );
 }
@@ -680,6 +776,51 @@ function SidebarPortsList({ topPorts, selectedPort, onSelect }) {
             <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
               <span style={{ fontSize:10, fontFamily:T.mono, fontWeight:700, color }}>
                 {Math.round(p.current_score ?? 0)}
+              </span>
+              <span style={{ width:5, height:5, borderRadius:"50%", background:color, flexShrink:0 }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   SIDEBAR LOADED PORTS  (sorted by current portcalls desc)
+───────────────────────────────────────────────────────── */
+function SidebarLoadedPortsList({ loadedPorts, selectedPort, onSelect }) {
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:0, overflowY:"auto", flex:1 }}>
+      {(loadedPorts || []).map((p, i) => {
+        const isActive = p.portname === selectedPort;
+        const color = p.congestion_level === "HIGH" ? T.red : p.congestion_level === "MEDIUM" ? T.amber : T.green;
+        return (
+          <div
+            key={p.portname}
+            onClick={() => onSelect(p.portname)}
+            style={{
+              display:"flex", alignItems:"center", gap:8,
+              padding:"0.55rem 0.75rem",
+              background: isActive ? T.tealBg : "transparent",
+              borderLeft: `2px solid ${isActive ? T.teal : "transparent"}`,
+              cursor:"pointer", transition:"all 0.15s",
+            }}
+            onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = T.navy3; }}
+            onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+          >
+            <span style={{ fontSize:9, fontFamily:T.mono, color:T.inkDim, width:14, textAlign:"right" }}>
+              {i + 1}
+            </span>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:11, fontWeight:600, color: isActive ? T.teal : T.ink,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {p.portname}
+              </div>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+              <span style={{ fontSize:10, fontFamily:T.mono, fontWeight:700, color: T.ink }}>
+                {Math.round(p.current_portcalls ?? 0)}
               </span>
               <span style={{ width:5, height:5, borderRadius:"50%", background:color, flexShrink:0 }} />
             </div>
@@ -1246,13 +1387,14 @@ const QUESTION_CATEGORIES = {
   ],
 };
 
-function AiAdvisor({ port }) {
+function AiAdvisor({ port, onSelectPort }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
   const [activeCategory, setActiveCategory] = useState("Diagnostic");
   const bottomRef               = useRef(null);
+  const { data: portListData }  = usePortList();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1314,7 +1456,7 @@ function AiAdvisor({ port }) {
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           <div style={{
             width:28, height:28, borderRadius:7,
-            background:`${T.teal}22`, border:`1px solid ${T.teal}44`,
+            background:T.tealSubtle, border:`1px solid ${T.tealBorder}`,
             display:"flex", alignItems:"center", justifyContent:"center",
           }}>
             <MessageSquare size={13} color={T.teal} />
@@ -1344,7 +1486,7 @@ function AiAdvisor({ port }) {
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
             flex:1, gap:"1.5rem", paddingTop:"2rem" }}>
             <div style={{ textAlign:"center" }}>
-              <div style={{ fontSize:28, marginBottom:8 }}>🚢</div>
+              <div style={{ fontSize:28, marginBottom:8 }}>{"\u{1F6A2}"}</div>
               <div style={{ fontWeight:700, fontSize:15, color:T.ink, marginBottom:4 }}>
                 Maritime Intelligence Advisor
               </div>
@@ -1354,12 +1496,20 @@ function AiAdvisor({ port }) {
               </div>
             </div>
 
+            {/* Today's Briefing (3A) */}
+            <Briefing T={T} onAskMore={(q) => send(q)} />
+
+            {/* Nearby Port Outlook (6B Part 3) */}
+            {port && (
+              <NearbyPortOutlook T={T} port={port} onSelectPort={onSelectPort} />
+            )}
+
             {/* Category pills */}
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"center" }}>
               {categories.map(cat => (
                 <button key={cat} onClick={() => setActiveCategory(cat)} style={{
                   padding:"0.3rem 0.75rem", borderRadius:20,
-                  background: activeCategory === cat ? `${T.teal}22` : "transparent",
+                  background: activeCategory === cat ? T.tealSubtle : "transparent",
                   border: `1px solid ${activeCategory === cat ? T.teal : T.border}`,
                   color: activeCategory === cat ? T.teal : T.inkMid,
                   fontSize:11, fontWeight: activeCategory === cat ? 700 : 500,
@@ -1370,6 +1520,9 @@ function AiAdvisor({ port }) {
                 </button>
               ))}
             </div>
+
+            {/* Scenario Simulator (3B) */}
+            <ScenarioSimulator T={T} onFollowUp={(q) => send(q)} />
 
             {/* Suggested questions for active category */}
             <div style={{ display:"flex", flexDirection:"column", gap:6, width:"100%", maxWidth:520 }}>
@@ -1393,6 +1546,11 @@ function AiAdvisor({ port }) {
                 );
               })}
             </div>
+
+            {/* Port Comparison (3C) */}
+            {portListData && portListData.ports && (
+              <PortComparison T={T} ports={portListData.ports} />
+            )}
           </div>
         )}
 
@@ -1405,7 +1563,7 @@ function AiAdvisor({ port }) {
               padding:"0.65rem 0.9rem",
               borderRadius: m.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
               background: m.role === "user" ? T.tealBg : T.navy3,
-              border: `1px solid ${m.role === "user" ? T.teal + "44" : T.border}`,
+              border: `1px solid ${m.role === "user" ? T.tealBorder : T.border}`,
               fontSize:13, lineHeight:1.6, color:T.ink,
               whiteSpace:"pre-wrap",
             }}>
@@ -1796,11 +1954,14 @@ export default function App() {
   const [port,  setPort]  = useState("");
   const [model, setModel] = useState("Prophet");
   const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "chokepoints" | "advisor"
+  const { isDark, toggle: toggleTheme } = useTheme();
 
   const { data: portData }                    = usePortList();
   const { data: overview, loading: ovLoad }   = useOverview(port);
   const { data: fcstData, loading: fcLoad }   = useForecast(port, model);
-  const { data: topData }                     = useTopPorts(20);
+  const { data: topData }                     = useTopPorts(20);                // asc — feeds AlternativePortsTable
+  const { data: anomalousData }                = useTopPorts(20, "desc");        // desc — feeds Most Anomalous sidebar
+  const { data: loadedData }                   = useTopLoadedPorts(10);
   const { data: compData }                    = useModelComp();
 
   const ports       = portData?.ports || [];
@@ -1840,7 +2001,7 @@ export default function App() {
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
               <div style={{
                 width:30, height:30, borderRadius:8,
-                background:`${T.teal}22`, border:`1px solid ${T.teal}44`,
+                background:T.tealSubtle, border:`1px solid ${T.tealBorder}`,
                 display:"flex", alignItems:"center", justifyContent:"center",
               }}>
                 <Anchor size={15} color={T.teal} />
@@ -1872,15 +2033,45 @@ export default function App() {
             </div>
           </div>
 
-          {/* Available ports sorted by congestion */}
+          {/* Most anomalous ports — z-score ranking */}
           <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
             display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
-            <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <Label>Port Availability</Label>
+            <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                <Label>Most Anomalous Ports</Label>
+                <span
+                  title={anomalousData?.description || "Ports ranked by per-port z-score deviation from their own historical baseline. Highlights ports having unusual days, NOT necessarily the most loaded ports."}
+                  style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
+                >
+                  <Info size={10} />
+                </span>
+              </div>
               <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
             </div>
             <SidebarPortsList
-              topPorts={topData?.ports}
+              topPorts={anomalousData?.ports}
+              selectedPort={port}
+              onSelect={setPort}
+            />
+          </div>
+
+          {/* Most loaded ports — absolute current portcalls */}
+          <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
+            display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
+            <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                <Label>Most Loaded Ports</Label>
+                <span
+                  title={loadedData?.description || "Ports ranked by absolute current vessel call volume. Highlights the busiest ports right now."}
+                  style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
+                >
+                  <Info size={10} />
+                </span>
+              </div>
+              <span style={{ fontSize:9, color: T.inkDim }}>portcalls</span>
+            </div>
+            <SidebarLoadedPortsList
+              loadedPorts={loadedData?.ports}
               selectedPort={port}
               onSelect={setPort}
             />
@@ -1922,7 +2113,10 @@ export default function App() {
             {tab === "ports" && (
               <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                 <PortSelector ports={ports} value={port} onChange={setPort} />
-                {kpi && <RiskPill level={kpi.congestion_level || kpi.traffic_level} />}
+                {kpi && <RiskPill
+                  level={kpi.congestion_level || kpi.traffic_level}
+                  unverified={kpi.live_coverage === "dark" || kpi.live_coverage === "sparse" || kpi.live_coverage === "unavailable"}
+                />}
               </div>
             )}
 
@@ -1943,6 +2137,17 @@ export default function App() {
                   )}
                 </>
               )}
+              <button
+                onClick={toggleTheme}
+                title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                style={{
+                  background:"none", border:`1px solid ${T.border}`, borderRadius:6,
+                  cursor:"pointer", padding:"5px 7px", display:"flex", alignItems:"center",
+                  color:T.inkMid, transition:"all 0.15s",
+                }}
+              >
+                {isDark ? <Sun size={14} /> : <Moon size={14} />}
+              </button>
             </div>
           </div>
 
@@ -1953,7 +2158,7 @@ export default function App() {
             </div>
           ) : tab === "advisor" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
-              <AiAdvisor port={port} />
+              <AiAdvisor port={port} onSelectPort={setPort} />
             </div>
           ) : tab === "chokepoints" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
@@ -1994,6 +2199,7 @@ export default function App() {
                         isHighest={(row.congestion_score ?? 50) === maxScore}
                         isLowest={(row.congestion_score ?? 50) === minScore}
                         isFirst={i === 0}
+                        isUnverified={kpi?.live_coverage === "dark" || kpi?.live_coverage === "sparse" || kpi?.live_coverage === "unavailable"}
                       />
                     ))}
                   </div>

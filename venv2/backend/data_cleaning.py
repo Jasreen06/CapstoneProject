@@ -34,15 +34,26 @@ RENAME_MAP = {
 }
 
 
+def _has_database() -> bool:
+    import os
+    return bool(os.getenv("DATABASE_URL", ""))
+
+
 def load_and_clean(filepath: str = None) -> pd.DataFrame:
     """
-    Load port data from Supabase and return a clean DataFrame.
-    The `filepath` argument is ignored — kept for backward compatibility.
+    Load port data from Supabase DB when DATABASE_URL is set,
+    otherwise fall back to local CSV file.
     """
-    logger.info("Loading port data from database")
-    from db import get_engine
-    engine = get_engine()
-    df = pd.read_sql("SELECT * FROM port_data", engine)
+    if _has_database():
+        logger.info("Loading port data from database")
+        from db import get_engine
+        engine = get_engine()
+        df = pd.read_sql("SELECT * FROM port_data", engine)
+    else:
+        from pathlib import Path
+        csv_path = filepath or str(Path(__file__).parent / "portwatch_us_data.csv")
+        logger.info(f"Loading port data from CSV: {csv_path}")
+        df = pd.read_csv(csv_path)
 
     # ── Rename columns ─────────────────────────────────────────────────────
     df = df.rename(columns=RENAME_MAP)
@@ -111,13 +122,19 @@ CHOKEPOINT_CAPACITY_COLS = [
 
 def load_and_clean_chokepoints(filepath: str = None) -> pd.DataFrame:
     """
-    Load chokepoint data from Supabase and return a clean DataFrame.
-    The `filepath` argument is ignored — kept for backward compatibility.
+    Load chokepoint data from Supabase DB when DATABASE_URL is set,
+    otherwise fall back to local CSV file.
     """
-    logger.info("Loading chokepoint data from database")
-    from db import get_engine
-    engine = get_engine()
-    df = pd.read_sql("SELECT * FROM chokepoint_data", engine)
+    if _has_database():
+        logger.info("Loading chokepoint data from database")
+        from db import get_engine
+        engine = get_engine()
+        df = pd.read_sql("SELECT * FROM chokepoint_data", engine)
+    else:
+        from pathlib import Path
+        csv_path = filepath or str(Path(__file__).parent / "chokepoint_data.csv")
+        logger.info(f"Loading chokepoint data from CSV: {csv_path}")
+        df = pd.read_csv(csv_path, on_bad_lines="skip")
 
     # ── Parse dates ─────────────────────────────────────────────────────────
     df["date"] = pd.to_datetime(df["date"], errors="coerce")

@@ -1,0 +1,65 @@
+/* ── Theme: Dark (default) ──────────────────────────────── */
+:root[data-theme="dark"] {
+  --bg-navy:       #0B1426;
+  --bg-navy2:      #111D35;
+  --bg-navy3:      #162140;
+  --bg-slate:      #1E2D4A;
+  --bg-slateL:     #253659;
+  --border-color:  #2A3F62;
+  --border-colorL: #354D75;
+  --accent-teal:   #00C9A7;
+  --accent-tealD:  #00A087;
+  --text-ink:      #E8EFF8;
+  --text-inkMid:   #8FA3BF;
+  --text-inkDim:   #4A6080;
+
+  /* Teal alpha variants */
+  --teal-bg:       rgba(0, 201, 167, 0.08);
+  --teal-subtle:   rgba(0, 201, 167, 0.13);
+  --teal-faint:    rgba(0, 201, 167, 0.07);
+  --teal-border:   rgba(0, 201, 167, 0.27);
+
+  /* Semantic alpha backgrounds (constant across themes) */
+  --amber-bg:      rgba(245, 158, 11, 0.10);
+  --red-bg:        rgba(239, 68, 68, 0.08);
+  --green-bg:      rgba(16, 185, 129, 0.08);
+  --blue-bg:       rgba(59, 130, 246, 0.08);
+
+  /* Composite */
+  --navy2-overlay: rgba(17, 29, 53, 0.93);
+  --border-subtle: rgba(42, 63, 98, 0.13);
+  --border-medium: rgba(42, 63, 98, 0.27);
+}
+
+/* ── Theme: Light ──────────────────────────────────────── */
+:root[data-theme="light"] {
+  --bg-navy:       #F8FAFC;
+  --bg-navy2:      #FFFFFF;
+  --bg-navy3:      #F1F5F9;
+  --bg-slate:      #E2E8F0;
+  --bg-slateL:     #CBD5E1;
+  --border-color:  #CBD5E1;
+  --border-colorL: #94A3B8;
+  --accent-teal:   #00A087;
+  --accent-tealD:  #008770;
+  --text-ink:      #0F172A;
+  --text-inkMid:   #475569;
+  --text-inkDim:   #64748B;
+
+  /* Teal alpha variants */
+  --teal-bg:       rgba(0, 160, 135, 0.08);
+  --teal-subtle:   rgba(0, 160, 135, 0.12);
+  --teal-faint:    rgba(0, 160, 135, 0.06);
+  --teal-border:   rgba(0, 160, 135, 0.22);
+
+  /* Semantic alpha backgrounds */
+  --amber-bg:      rgba(245, 158, 11, 0.10);
+  --red-bg:        rgba(239, 68, 68, 0.08);
+  --green-bg:      rgba(16, 185, 129, 0.08);
+  --blue-bg:       rgba(59, 130, 246, 0.08);
+
+  /* Composite */
+  --navy2-overlay: rgba(255, 255, 255, 0.93);
+  --border-subtle: rgba(203, 213, 225, 0.40);
+  --border-medium: rgba(203, 213, 225, 0.60);
+}

@@ -29,7 +29,10 @@ export function useFetch(path) {
 export const usePortList        = ()              => useFetch("/api/ports");
 export const useOverview        = (port)          => useFetch(port ? `/api/overview?port=${encodeURIComponent(port)}` : null);
 export const useForecast        = (port, model)   => useFetch(port ? `/api/forecast?port=${encodeURIComponent(port)}&model=${model}&horizon=7` : null);
-export const useTopPorts        = (n = 50)        => useFetch(`/api/top-ports?top_n=${n}`);
+export const useTopPorts        = (n = 50, sort_order) => useFetch(`/api/top-ports?top_n=${n}${sort_order ? `&sort_order=${sort_order}` : ""}`);
+export const useTopLoadedPorts  = (n = 10)        => useFetch(`/api/top-loaded-ports?n=${n}`);
+export const useNearbyPorts     = (port, radius_nm = 300, max_results = 6) =>
+  useFetch(port ? `/api/advisor/nearby-ports?port=${encodeURIComponent(port)}&radius_nm=${radius_nm}&max_results=${max_results}` : null);
 export const useModelComp       = ()              => useFetch("/api/model-comparison");
 export const useChokepoints      = ()             => useFetch("/api/chokepoints");
 export const useChokepointDetail = (name)         => useFetch(name ? `/api/chokepoints/overview?name=${encodeURIComponent(name)}` : null);
@@ -42,6 +45,45 @@ export async function postChat(question, port, resetMemory = false) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question, port: port || null, reset_memory: resetMemory }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function postBriefing() {
+  const res = await fetch(`${BASE}/api/advisor/briefing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function postScenario(scenario) {
+  const res = await fetch(`${BASE}/api/advisor/scenario`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenario }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function postComparison(ports) {
+  const res = await fetch(`${BASE}/api/advisor/compare`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ports }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
