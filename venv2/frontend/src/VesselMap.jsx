@@ -8,11 +8,11 @@ import { Ship, Wifi, WifiOff, RotateCcw, ChevronDown, Anchor, MapPin, Search } f
 
 /* ── Design tokens (match App.jsx) ────────────────────────── */
 const T = {
-  navy: "#0B1426", navy2: "#111D35", navy3: "#162140",
-  border: "#2A3F62", borderL: "#354D75",
-  teal: "#00C9A7", amber: "#F59E0B", red: "#EF4444",
-  green: "#10B981", blue: "#3B82F6",
-  ink: "#E8EFF8", inkMid: "#8FA3BF", inkDim: "#4A6080",
+  navy: "#F5F7FA", navy2: "#EDF0F5", navy3: "#E4E8EF",
+  border: "#C8D0DE", borderL: "#B8C2D4",
+  teal: "#0A9B80", amber: "#D97706", red: "#DC2626",
+  green: "#059669", blue: "#2563EB",
+  ink: "#1A202C", inkMid: "#4A5568", inkDim: "#718096",
   sans: "'Syne', sans-serif", mono: "'JetBrains Mono', monospace",
 };
 
@@ -156,29 +156,19 @@ function getVesselIcon(type, color, isSelected) {
   return icon;
 }
 
-// Cached anchor divIcons for port centers — one per congestion tier color
-const _portAnchorCache = {};
-function getPortAnchorIcon(score) {
-  const color = score >= 67 ? "#EF4444" : score >= 33 ? "#F59E0B" : "#10B981";
-  if (_portAnchorCache[color]) return _portAnchorCache[color];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="22"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>`;
-  const icon = L.divIcon({
-    html: svg,
+// Cached divIcons for sonar pulse per congestion tier
+const _pulseIconCache = {};
+function getPulseIcon(score) {
+  const tier = score >= 67 ? "high" : score >= 33 ? "med" : "low";
+  if (_pulseIconCache[tier]) return _pulseIconCache[tier];
+  _pulseIconCache[tier] = L.divIcon({
+    html: `<div class="port-sonar port-sonar-${tier}"><div class="port-sonar-ring"></div></div>`,
     className: "",
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
-  _portAnchorCache[color] = icon;
-  return icon;
+  return _pulseIconCache[tier];
 }
-
-// Cached divIcon for congested-port sonar pulse (pixel-based, zoom-independent)
-const _pulseIcon = L.divIcon({
-  html: '<div class="port-sonar"><div class="port-sonar-ring"></div><div class="port-sonar-ring"></div></div>',
-  className: "",
-  iconSize: [60, 60],
-  iconAnchor: [30, 30],
-});
 
 /* ── SSE hook for live vessels ───────────────────────────── */
 function useVesselStream() {
@@ -426,9 +416,9 @@ function congestionColor(score) {
 }
 
 function congestionFill(score) {
-  if (score >= 67) return "rgba(239,68,68,0.18)";
-  if (score >= 33) return "rgba(245,158,11,0.14)";
-  return "rgba(16,185,129,0.12)";
+  if (score >= 67) return "rgba(239,68,68,0.25)";
+  if (score >= 33) return "rgba(245,158,11,0.22)";
+  return "rgba(16,185,129,0.20)";
 }
 
 /* ── Port dropdown with search ─────────────────────────── */
@@ -533,13 +523,13 @@ const US_CENTER = [37.5, -96.0];
 const US_ZOOM = 4;
 
 /* ── Port layer (static radii — no zoom state, no rerender on zoom) ── */
-function PortLayer({ portMarkers, showPorts }) {
+function PortLayer({ portMarkers, showPorts, onPortClick }) {
   if (!showPorts) return null;
   return (
     <>
-      {/* Sonar pulse markers for HIGH congestion ports */}
-      {portMarkers.filter(p => p.score >= 67).map(p => (
-        <Marker key={`pulse-${p.name}`} position={p.coords} icon={_pulseIcon}
+      {/* Sonar pulse markers — only HIGH and MEDIUM congestion ports */}
+      {portMarkers.filter(p => p.score >= 33).map(p => (
+        <Marker key={`pulse-${p.name}`} position={p.coords} icon={getPulseIcon(p.score)}
           zIndexOffset={-1000} interactive={false} />
       ))}
 
@@ -549,29 +539,48 @@ function PortLayer({ portMarkers, showPorts }) {
           radius={p.baseRadius}
           pathOptions={{
             color: congestionColor(p.score), fillColor: congestionFill(p.score),
-            fillOpacity: 0.5, weight: 1.5,
+            fillOpacity: 0.15, weight: 1.5,
             dashArray: p.score >= 67 ? "" : "4 3",
+            className: "port-circle-clickable",
+          }}
+          eventHandlers={{
+            click: () => onPortClick(p.name),
           }}
         >
           <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
             <div style={{ fontFamily: T.sans, fontSize: 11, lineHeight: 1.5 }}>
               <strong>{p.name}</strong><br />
               Congestion: <span style={{ color: congestionColor(p.score), fontWeight: 700 }}>{p.status}</span> ({p.score.toFixed(0)})<br />
-              Inbound vessels: <strong>{p.vesselCount}</strong>
+              At port (anchored/moored): <strong>{p.atPort || 0}</strong>
+              <br />En route: <strong>{p.enRoute || 0}</strong>
             </div>
           </Tooltip>
         </Circle>
       ))}
 
-      {/* Port center anchors (pixel-based — zoom-independent) */}
+      {/* Port center dots (pixel-based — zoom-independent) */}
       {portMarkers.map(p => (
-        <Marker key={`port-dot-${p.name}`}
-          position={p.coords}
-          icon={getPortAnchorIcon(p.score)}
-          zIndexOffset={500}
-          interactive={false}
-        />
+        <CircleMarker key={`port-dot-${p.name}`} center={p.coords}
+          radius={p.isMajor ? 5 : 3}
+          pathOptions={{
+            color: congestionColor(p.score), fillColor: congestionColor(p.score),
+            fillOpacity: 0.9, weight: 1.5,
+          }}
+          eventHandlers={{
+            click: () => onPortClick(p.name),
+          }}
+        >
+          <Tooltip direction="top" offset={[0, -6]} opacity={0.95}>
+            <div style={{ fontFamily: T.sans, fontSize: 11, lineHeight: 1.5 }}>
+              <strong>{p.name}</strong><br />
+              Congestion: <span style={{ color: congestionColor(p.score), fontWeight: 700 }}>{p.status}</span> ({p.score.toFixed(0)})<br />
+              At port (anchored/moored): <strong>{p.atPort || 0}</strong>
+              <br />En route: <strong>{p.enRoute || 0}</strong>
+            </div>
+          </Tooltip>
+        </CircleMarker>
       ))}
+
     </>
   );
 }
@@ -598,26 +607,47 @@ export default function VesselMap() {
     const style = document.createElement("style");
     style.id = id;
     style.textContent = `
-      .port-sonar { position: relative; width: 60px; height: 60px; pointer-events: none; }
+      .port-sonar { position: relative; width: 36px; height: 36px; pointer-events: none; }
       .port-sonar-ring {
         position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-        border-radius: 50%; border: 2px solid #EF4444;
-        opacity: 0; animation: sonar-expand 2s ease-out infinite;
+        border-radius: 50%;
+        opacity: 0;
       }
-      .port-sonar-ring:nth-child(2) { animation-delay: 1s; }
-      @keyframes sonar-expand {
-        0%   { transform: scale(0.3); opacity: 0.7; }
-        50%  { opacity: 0.3; }
-        100% { transform: scale(2.5); opacity: 0; }
+      .port-sonar-high .port-sonar-ring {
+        border: 2px solid #DC2626;
+        animation: sonar-fast 1.8s ease-out infinite;
+      }
+      .port-sonar-med .port-sonar-ring {
+        border: 1.5px solid #D97706;
+        animation: sonar-med 2.5s ease-out infinite;
+      }
+      .port-sonar-low .port-sonar-ring {
+        border: 1px solid #059669;
+        animation: sonar-slow 3.5s ease-out infinite;
+      }
+      .port-circle-clickable { cursor: pointer; }
+      @keyframes sonar-fast {
+        0%   { transform: scale(0.5); opacity: 0.6; }
+        100% { transform: scale(2.0); opacity: 0; }
+      }
+      @keyframes sonar-med {
+        0%   { transform: scale(0.5); opacity: 0.4; }
+        100% { transform: scale(1.8); opacity: 0; }
+      }
+      @keyframes sonar-slow {
+        0%   { transform: scale(0.5); opacity: 0.25; }
+        100% { transform: scale(1.5); opacity: 0; }
       }
     `;
     document.head.appendChild(style);
     return () => { const el = document.getElementById(id); if (el) el.remove(); };
   }, []);
 
-  // Filter to US-bound vessels only + apply type/status filters
-  const { usVessels, portVesselCounts } = useMemo(() => {
+  // Filter to US-bound vessels only + split counts: at port vs en route
+  const { usVessels, portVesselCounts, portAtPort, portEnRoute } = useMemo(() => {
     const counts = {};
+    const atPort = {};
+    const enRoute = {};
     const usOnly = [];
 
     for (const v of vessels) {
@@ -632,11 +662,17 @@ export default function VesselMap() {
         usOnly.push(v);
         if (resolvedPort && resolvedPort !== "__US_UNKNOWN__") {
           counts[resolvedPort] = (counts[resolvedPort] || 0) + 1;
+          const isAtPort = v.nav_status_label === "At Anchor" || v.nav_status_label === "Moored";
+          if (isAtPort) {
+            atPort[resolvedPort] = (atPort[resolvedPort] || 0) + 1;
+          } else {
+            enRoute[resolvedPort] = (enRoute[resolvedPort] || 0) + 1;
+          }
         }
       }
     }
 
-    return { usVessels: usOnly, portVesselCounts: counts };
+    return { usVessels: usOnly, portVesselCounts: counts, portAtPort: atPort, portEnRoute: enRoute };
   }, [vessels]);
 
   // STRESS_TEST: uncomment to simulate 10K vessels
@@ -661,6 +697,10 @@ export default function VesselMap() {
   const filtered = usVessels.filter(v => {
     if (typeFilters.size < VESSEL_TYPES.length && !typeFilters.has(v.vessel_type_label)) return false;
     if (statusFilter && v.nav_status_label !== statusFilter) return false;
+    // Hide vessels with no useful info (unknown type + no destination)
+    const hasType = v.vessel_type_label && v.vessel_type_label !== "Unknown";
+    const hasDest = v.destination && v.destination.trim() !== "";
+    if (!hasType && !hasDest) return false;
     return true;
   });
 
@@ -676,16 +716,19 @@ export default function VesselMap() {
     for (const [name, coords] of Object.entries(PORT_COORDS)) {
       const cong = congestionMap[name];
       const vesselCount = portVesselCounts[name] || 0;
+      const atPort = portAtPort[name] || 0;
+      const enRoute = portEnRoute[name] || 0;
+      const portcalls = cong?.last_portcalls ?? 0;
       const score = cong?.current_score ?? 50;
       const status = cong?.status || "MEDIUM";
       const isMajor = MAJOR_PORTS.has(name);
       const baseRadius = isMajor
-        ? Math.min(8000 + vesselCount * 500, 30000)
-        : Math.min(3000 + vesselCount * 400, 25000);
-      markers.push({ name, coords, vesselCount, score, status, baseRadius, isMajor });
+        ? Math.min(12000 + vesselCount * 800, 40000)
+        : Math.min(8000 + vesselCount * 500, 25000);
+      markers.push({ name, coords, vesselCount, atPort, enRoute, portcalls, score, status, baseRadius, isMajor });
     }
     return markers;
-  }, [congestionPorts, portVesselCounts]);
+  }, [congestionPorts, portVesselCounts, portAtPort, portEnRoute]);
 
   return (
     <div style={{ height: "100%", position: "relative", background: T.navy }}>
@@ -781,18 +824,16 @@ export default function VesselMap() {
         maxZoom={14}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; <a href="https://carto.com/">CARTO</a>'
         />
         <ResetView center={US_CENTER} zoom={US_ZOOM} />
         <FlyToPort port={selectedPort} />
 
-        {/* Port layer (owns zoom state — zoom changes only rerender ports, not vessels) */}
-        <PortLayer portMarkers={congestionFilter
-          ? portMarkers.filter(p => p.status === congestionFilter)
-          : portMarkers} showPorts={showPorts} />
+        {/* Port layer */}
+        <PortLayer portMarkers={portMarkers} showPorts={showPorts} onPortClick={setSelectedPort} />
 
-        {/* Vessel markers — clustered, shaped divIcons per vessel type */}
+        {/* Vessel markers — clustered at low zoom, individual at zoom ≥ 10 */}
         <MarkerClusterGroup
           disableClusteringAtZoom={10}
           maxClusterRadius={60}

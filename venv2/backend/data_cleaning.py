@@ -36,13 +36,17 @@ RENAME_MAP = {
 
 def load_and_clean(filepath: str = None) -> pd.DataFrame:
     """
-    Load port data from Supabase and return a clean DataFrame.
-    The `filepath` argument is ignored — kept for backward compatibility.
+    Load port data from DB if available, otherwise fall back to CSV.
     """
-    logger.info("Loading port data from database")
-    from db import get_engine
-    engine = get_engine()
-    df = pd.read_sql("SELECT * FROM port_data", engine)
+    try:
+        from db import get_engine
+        engine = get_engine()
+        logger.info("Loading port data from database")
+        df = pd.read_sql("SELECT * FROM port_data", engine)
+    except Exception:
+        csv_path = filepath or "portwatch_us_data.csv"
+        logger.info(f"Loading port data from {csv_path}")
+        df = pd.read_csv(csv_path, low_memory=False)
 
     # ── Rename columns ─────────────────────────────────────────────────────
     df = df.rename(columns=RENAME_MAP)
@@ -114,10 +118,15 @@ def load_and_clean_chokepoints(filepath: str = None) -> pd.DataFrame:
     Load chokepoint data from Supabase and return a clean DataFrame.
     The `filepath` argument is ignored — kept for backward compatibility.
     """
-    logger.info("Loading chokepoint data from database")
-    from db import get_engine
-    engine = get_engine()
-    df = pd.read_sql("SELECT * FROM chokepoint_data", engine)
+    try:
+        from db import get_engine
+        engine = get_engine()
+        logger.info("Loading chokepoint data from database")
+        df = pd.read_sql("SELECT * FROM chokepoint_data", engine)
+    except Exception:
+        csv_path = filepath or "chokepoint_data.csv"
+        logger.info(f"Loading chokepoint data from {csv_path}")
+        df = pd.read_csv(csv_path, low_memory=False, on_bad_lines="skip")
 
     # ── Parse dates ─────────────────────────────────────────────────────────
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
