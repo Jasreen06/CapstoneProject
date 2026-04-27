@@ -17,27 +17,27 @@ import VesselMap from "./VesselMap";
    DESIGN TOKENS
 ───────────────────────────────────────────────────────── */
 const T = {
-  navy:    "#0B1426",
-  navy2:   "#111D35",
-  navy3:   "#162140",
-  slate:   "#1E2D4A",
-  slateL:  "#253659",
-  border:  "#2A3F62",
-  borderL: "#354D75",
-  teal:    "#00C9A7",
-  tealD:   "#00A087",
-  tealBg:  "rgba(0,201,167,0.08)",
-  amber:   "#F59E0B",
-  amberBg: "rgba(245,158,11,0.1)",
-  red:     "#EF4444",
-  redBg:   "rgba(239,68,68,0.08)",
-  green:   "#10B981",
-  greenBg: "rgba(16,185,129,0.08)",
-  blue:    "#3B82F6",
-  blueBg:  "rgba(59,130,246,0.08)",
-  ink:     "#E8EFF8",
-  inkMid:  "#8FA3BF",
-  inkDim:  "#4A6080",
+  navy:    "#F5F7FA",
+  navy2:   "#EDF0F5",
+  navy3:   "#E4E8EF",
+  slate:   "#DDE2EB",
+  slateL:  "#D4DAE5",
+  border:  "#C8D0DE",
+  borderL: "#B8C2D4",
+  teal:    "#0A9B80",
+  tealD:   "#078A72",
+  tealBg:  "rgba(10,155,128,0.08)",
+  amber:   "#D97706",
+  amberBg: "rgba(217,119,6,0.1)",
+  red:     "#DC2626",
+  redBg:   "rgba(220,38,38,0.08)",
+  green:   "#059669",
+  greenBg: "rgba(5,150,105,0.08)",
+  blue:    "#2563EB",
+  blueBg:  "rgba(37,99,235,0.08)",
+  ink:     "#1A202C",
+  inkMid:  "#4A5568",
+  inkDim:  "#718096",
   mono:    "'JetBrains Mono', monospace",
   sans:    "'Syne', sans-serif",
 };
@@ -58,7 +58,7 @@ const GLOBAL_CSS = `
   }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 2px; }
+  ::-webkit-scrollbar-thumb { background: ${T.borderL}; border-radius: 2px; }
 
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; }
@@ -314,15 +314,6 @@ function CongestionHero({ kpi }) {
               {kpi?.last_portcalls != null ? Math.round(kpi.last_portcalls) : "—"}
             </div>
           </div>
-          <div>
-            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Data freshness</div>
-            <div style={{ fontSize:13, fontWeight:600,
-              color: lag === 0 ? T.green : lag > 7 ? T.red : lag > 3 ? T.amber : T.inkMid,
-              display:"flex", alignItems:"center", gap:4 }}>
-              <Clock size={12} />
-              {lag === 0 ? "Up to date" : `${lag}d behind real-time`}
-            </div>
-          </div>
         </div>
       </div>
     </Card>
@@ -507,14 +498,6 @@ function InsightsPanel({ kpi, forecast }) {
       color: T.blue,
       title: "7-day avg forecast",
       body: `Score ${avgFcst.toFixed(0)} / 100 — ${avgFcst >= 67 ? "HIGH congestion period" : avgFcst >= 33 ? "Moderate period" : "Low-congestion week"}`,
-    },
-    {
-      icon: Clock,
-      color: lag > 7 ? T.amber : T.teal,
-      title: "Data freshness",
-      body: lag === 0 ? "Data is current"
-          : lag <= 3  ? `Data is ${lag} day${lag > 1 ? "s" : ""} old — reliable`
-          : `Data is ${lag} days old — forecast uncertainty higher`,
     },
   ];
 
@@ -848,9 +831,6 @@ function ChokepointDetailPanel({ name }) {
           <div style={{ fontSize:18, fontWeight:800, color:T.ink, marginBottom:4 }}>{name}</div>
           <div style={{ fontSize:12, color:T.inkMid, marginBottom:12 }}>
             as of {kpi?.last_date || "—"}
-            {kpi?.data_lag_days > 0 && (
-              <span style={{ color:T.amber, marginLeft:6 }}>({kpi.data_lag_days}d lag)</span>
-            )}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.6rem 1.2rem" }}>
             <div>
@@ -1167,7 +1147,7 @@ function SupplyChainRiskCard({ port }) {
         </span>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:"0.6rem" }}>
+      <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(chokepoints.length, 4)}, 1fr)`, gap:"0.6rem" }}>
         {chokepoints.map(c => {
           const cfg = DISRUPTION_CFG[c.disruption_level] || DISRUPTION_CFG.LOW;
           const score = c.disruption_score ?? 0;
@@ -1208,6 +1188,19 @@ function SupplyChainRiskCard({ port }) {
               <div style={{ fontSize:9, color:T.inkDim }}>
                 {c.n_total ?? 0} ships · avg {c.avg_daily_transits?.toFixed(0) ?? "—"}/day
               </div>
+
+              {/* Transit lag + impact note */}
+              {c.lag_days && (
+                <div style={{
+                  fontSize:8,
+                  color: c.disruption_level === "HIGH" ? cfg.color : T.inkDim,
+                  fontWeight: c.disruption_level === "HIGH" ? 600 : 400,
+                  borderTop:`1px solid ${T.border}`,
+                  paddingTop:4, marginTop:1,
+                }}>
+                  {c.impact_note || `~${c.lag_days}d transit to port`}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1827,13 +1820,14 @@ export default function App() {
       <style>{GLOBAL_CSS}</style>
       <div style={{ display:"flex", height:"100vh", overflow:"hidden" }}>
 
-        {/* ── LEFT SIDEBAR ─────────────────────────────── */}
+        {/* ── LEFT SIDEBAR (Port Intelligence only) ────── */}
         <aside style={{
-          width:210, flexShrink:0,
+          width: tab === "ports" ? 210 : 0, flexShrink:0,
           background: T.navy2,
-          borderRight:`1px solid ${T.border}`,
+          borderRight: tab === "ports" ? `1px solid ${T.border}` : "none",
           display:"flex", flexDirection:"column",
           overflow:"hidden",
+          transition:"width 0.2s ease",
         }}>
           {/* Logo */}
           <div style={{ padding:"1rem 1rem 0.85rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
@@ -1852,39 +1846,43 @@ export default function App() {
             </div>
           </div>
 
-          {/* Model selector */}
-          <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
-            <Label style={{ marginBottom:7 }}>Forecast Model</Label>
-            <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-              {["Prophet", "ARIMA", "XGBoost"].map(m => (
-                <button key={m} onClick={() => setModel(m)} style={{
-                  display:"flex", alignItems:"center", justifyContent:"space-between",
-                  padding:"0.3rem 0.6rem", borderRadius:6, border:"none", cursor:"pointer",
-                  background: model === m ? T.tealBg : "transparent",
-                  color: model === m ? T.teal : T.inkMid,
-                  fontFamily: T.sans, fontSize:12, fontWeight: model === m ? 700 : 400,
-                  textAlign:"left", transition:"all 0.15s",
-                }}>
-                  {m}
-                  {recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>}
-                </button>
-              ))}
-            </div>
-          </div>
+          {tab === "ports" && (
+            <>
+              {/* Model selector */}
+              <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
+                <Label style={{ marginBottom:7 }}>Forecast Model</Label>
+                <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                  {["Prophet", "ARIMA", "XGBoost"].map(m => (
+                    <button key={m} onClick={() => setModel(m)} style={{
+                      display:"flex", alignItems:"center", justifyContent:"space-between",
+                      padding:"0.3rem 0.6rem", borderRadius:6, border:"none", cursor:"pointer",
+                      background: model === m ? T.tealBg : "transparent",
+                      color: model === m ? T.teal : T.inkMid,
+                      fontFamily: T.sans, fontSize:12, fontWeight: model === m ? 700 : 400,
+                      textAlign:"left", transition:"all 0.15s",
+                    }}>
+                      {m}
+                      {recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* Available ports sorted by congestion */}
-          <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
-            display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
-            <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <Label>Port Availability</Label>
-              <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
-            </div>
-            <SidebarPortsList
-              topPorts={topData?.ports}
-              selectedPort={port}
-              onSelect={setPort}
-            />
-          </div>
+              {/* Available ports sorted by congestion */}
+              <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
+                display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
+                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <Label>Port Availability</Label>
+                  <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
+                </div>
+                <SidebarPortsList
+                  topPorts={topData?.ports}
+                  selectedPort={port}
+                  onSelect={setPort}
+                />
+              </div>
+            </>
+          )}
 
           {/* Bottom status */}
           <div style={{ padding:"0.6rem 0.9rem", borderTop:`1px solid ${T.border}`, flexShrink:0 }}>
@@ -1908,7 +1906,7 @@ export default function App() {
             {/* Tab switcher */}
             <div style={{ display:"flex", alignItems:"center", gap:4,
               background:T.navy3, borderRadius:8, padding:3, border:`1px solid ${T.border}` }}>
-              {[["ports","Port Intelligence"],["vessels","Live Vessels"],["chokepoints","Chokepoints"],["advisor","AI Advisor"]].map(([key, label]) => (
+              {[["ports","Port Intelligence"],["vessels","Live Vessels"],["advisor","AI Advisor"]].map(([key, label]) => (
                 <button key={key} onClick={() => setTab(key)} style={{
                   padding:"0.3rem 0.85rem", borderRadius:6, border:"none", cursor:"pointer",
                   background: tab === key ? T.teal : "transparent",
@@ -1934,11 +1932,6 @@ export default function App() {
                     <div style={{ fontSize:10, color:T.inkDim, display:"flex", alignItems:"center", gap:4 }}>
                       <Calendar size={10} />
                       Last data: {kpi.last_date}
-                      {kpi.data_lag_days > 0 && (
-                        <span style={{ color: kpi.data_lag_days > 7 ? T.amber : T.inkDim }}>
-                          ({kpi.data_lag_days}d ago)
-                        </span>
-                      )}
                     </div>
                   )}
                 </>
@@ -1954,10 +1947,6 @@ export default function App() {
           ) : tab === "advisor" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
               <AiAdvisor port={port} />
-            </div>
-          ) : tab === "chokepoints" ? (
-            <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
-              <ChokepointView />
             </div>
           ) : !port ? (
             <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
