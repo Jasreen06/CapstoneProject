@@ -149,9 +149,15 @@ async def connect_aisstream() -> None:
     }
 
     logger.info("Connecting to aisstream.io...")
-    async with websockets.connect(WSS_URL, ping_interval=30, ping_timeout=10) as ws:
+    async with websockets.connect(
+        WSS_URL,
+        ping_interval=20,
+        ping_timeout=30,
+        close_timeout=10,
+        max_size=2**23,
+    ) as ws:
         await ws.send(json.dumps(subscription))
-        logger.info("AIS stream connected — receiving vessel data")
+        logger.info("AIS stream connected — subscription sent, waiting for data...")
 
         last_cleanup = datetime.now(timezone.utc)
 
@@ -172,21 +178,24 @@ async def start_ais_consumer() -> None:
         logger.warning("AISSTREAM_API_KEY not set — AIS consumer disabled")
         return
 
-    backoff = 1
-    max_backoff = 60
+    backoff = 5
+    max_backoff = 120
 
     while True:
         try:
             await connect_aisstream()
-            backoff = 1
+            backoff = 5
         except ConnectionClosed as e:
-            logger.warning(f"AIS stream closed: {e}. Reconnecting in {backoff}s...")
+            logger.warning(
+                f"AIS stream closed: code={e.rcvd.code if e.rcvd else 'none'} "
+                f"reason='{e.rcvd.reason if e.rcvd else 'none'}'. Reconnecting in {backoff}s..."
+            )
         except WebSocketException as e:
             logger.error(f"AIS WebSocket error: {e}. Reconnecting in {backoff}s...")
         except OSError as e:
             logger.error(f"AIS network error: {e}. Reconnecting in {backoff}s...")
         except Exception as e:
-            logger.error(f"AIS unexpected error: {e}. Reconnecting in {backoff}s...")
+            logger.error(f"AIS unexpected error: {type(e).__name__}: {e}. Reconnecting in {backoff}s...")
 
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, max_backoff)
