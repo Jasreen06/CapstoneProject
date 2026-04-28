@@ -11,7 +11,7 @@ import {
   Calendar, Navigation, Zap, Info, MessageSquare, Send, RotateCcw,
   Sun, Moon,
 } from "lucide-react";
-import { usePortList, useOverview, useForecast, useTopPorts, useTopLoadedPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
+import { usePortList, useOverview, useForecast, useTopPorts, useTopLoadedPorts, useModelComp, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
 import { useTheme } from "./hooks/useTheme";
 import VesselMap from "./VesselMap";
 import Briefing from "./components/advisor/Briefing";
@@ -70,7 +70,7 @@ const GLOBAL_CSS = `
   }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: ${T.border}; border-radius: 2px; }
+  ::-webkit-scrollbar-thumb { background: ${T.borderL}; border-radius: 2px; }
 
   @keyframes pulse-dot {
     0%, 100% { opacity: 1; }
@@ -604,14 +604,6 @@ function InsightsPanel({ kpi, forecast }) {
       title: "7-day avg forecast",
       body: `Score ${avgFcst.toFixed(0)} / 100 — ${avgFcst >= 67 ? "HIGH congestion period" : avgFcst >= 33 ? "Moderate period" : "Low-congestion week"}`,
     },
-    {
-      icon: Clock,
-      color: lag > 7 ? T.amber : T.teal,
-      title: "Data freshness",
-      body: lag === 0 ? "Data is current"
-          : lag <= 3  ? `Data is ${lag} day${lag > 1 ? "s" : ""} old — reliable`
-          : `Data is ${lag} days old — forecast uncertainty higher`,
-    },
   ];
 
   return (
@@ -840,303 +832,6 @@ const DISRUPTION_CFG = {
   LOW:    { color: T.green, bg: T.greenBg, label: "Normal Flow",  icon: CheckCircle },
 };
 
-function DisruptionPill({ level }) {
-  const cfg = DISRUPTION_CFG[level] || DISRUPTION_CFG.LOW;
-  const Icon = cfg.icon;
-  return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding:"3px 10px", borderRadius:99,
-      background: cfg.bg, color: cfg.color,
-      fontSize:11, fontWeight:700, letterSpacing:"0.04em",
-      border:`1px solid ${cfg.color}33`, textTransform:"uppercase",
-    }}>
-      <Icon size={11} />{cfg.label}
-    </span>
-  );
-}
-
-function ChokepointCard({ chk, isSelected, onClick }) {
-  const cfg   = DISRUPTION_CFG[chk.disruption_level] || DISRUPTION_CFG.LOW;
-  const score = chk.disruption_score ?? 0;
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        background: isSelected ? T.tealBg : T.navy3,
-        border: `1px solid ${isSelected ? T.teal : cfg.color + "44"}`,
-        borderRadius:10, padding:"0.75rem 0.9rem",
-        cursor:"pointer", transition:"all 0.15s",
-        display:"flex", flexDirection:"column", gap:6,
-      }}
-      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = T.borderL; }}
-      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = cfg.color + "44"; }}
-    >
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
-        <div style={{ fontSize:11, fontWeight:700, color: isSelected ? T.teal : T.ink,
-          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-          {chk.portname}
-        </div>
-        <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.05em",
-          padding:"2px 6px", borderRadius:4,
-          background:`${cfg.color}18`, color:cfg.color, textTransform:"uppercase", flexShrink:0 }}>
-          {chk.disruption_level}
-        </span>
-      </div>
-
-      {/* Score bar */}
-      <div style={{ height:3, background:T.border, borderRadius:2, overflow:"hidden" }}>
-        <div style={{ width:`${score}%`, height:"100%", background:cfg.color,
-          borderRadius:2, transition:"width 0.6s ease" }} />
-      </div>
-
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontSize:10, color:T.inkDim }}>
-          {chk.n_total ?? 0} ships/day
-        </div>
-        <div style={{ fontSize:10, fontFamily:T.mono, fontWeight:700, color:cfg.color }}>
-          {Math.round(score)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ChokepointHistoryChart({ history }) {
-  if (!history?.length) return null;
-  const data = history.map(r => ({
-    date: r.date?.slice(5),
-    score: r.disruption_score ?? null,
-    smooth: r.n_total_7d ?? null,
-  }));
-  return (
-    <ResponsiveContainer width="100%" height={160}>
-      <ComposedChart data={data} margin={{ top:8, right:8, bottom:0, left:0 }}>
-        <defs>
-          <linearGradient id="chkGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"  stopColor={T.amber} stopOpacity={0.3} />
-            <stop offset="100%" stopColor={T.amber} stopOpacity={0.02} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="2 4" stroke={T.border} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false}
-          interval={Math.floor(data.length / 6)} />
-        <YAxis domain={[0,100]} tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false} width={24} />
-        <Tooltip content={({ active, payload, label }) => {
-          if (!active || !payload?.length) return null;
-          return (
-            <div style={{ background:T.slate, border:`1px solid ${T.borderL}`, borderRadius:8, padding:"0.5rem 0.75rem", fontSize:11 }}>
-              <div style={{ color:T.inkMid, marginBottom:3 }}>{label}</div>
-              {payload.map((p, i) => p.value != null && (
-                <div key={i} style={{ color:p.color, fontWeight:600 }}>
-                  {p.name}: {typeof p.value === "number" ? Math.round(p.value) : p.value}
-                </div>
-              ))}
-            </div>
-          );
-        }} />
-        <ReferenceLine y={67} stroke={T.red}   strokeDasharray="3 3" strokeOpacity={0.5} />
-        <ReferenceLine y={33} stroke={T.amber} strokeDasharray="3 3" strokeOpacity={0.5} />
-        <Area type="monotone" dataKey="score" name="Disruption"
-          stroke={T.amber} strokeWidth={2} fill="url(#chkGrad)" dot={false} connectNulls />
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
-}
-
-function ChokepointDetailPanel({ name }) {
-  const { data, loading } = useChokepointDetail(name);
-  if (loading) return <Spinner />;
-  if (!data) return null;
-
-  const { kpi, history, vessel_mix } = data;
-  const cfg = DISRUPTION_CFG[kpi?.disruption_level] || DISRUPTION_CFG.LOW;
-  const score = kpi?.disruption_score ?? 0;
-  const R = 54, cx = 64, cy = 62;
-  const pLen = Math.PI * R;
-  const fill = (Math.min(100, Math.max(0, score)) / 100) * pLen;
-
-  const VESSEL_TRANSIT_CFG = [
-    { key:"n_container",     label:"Container", color:"#3B82F6" },
-    { key:"n_tanker",        label:"Tanker",    color:"#F59E0B" },
-    { key:"n_dry_bulk",      label:"Dry Bulk",  color:"#10B981" },
-    { key:"n_general_cargo", label:"General",   color:"#8B5CF6" },
-    { key:"n_roro",          label:"RoRo",      color:"#EC4899" },
-  ];
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-
-      {/* Hero */}
-      <Card style={{ padding:"1.25rem 1.5rem", display:"flex", alignItems:"center", gap:"1.5rem" }}>
-        <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
-          <svg width={128} height={74} viewBox="0 0 128 74">
-            <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
-              fill="none" stroke={T.border} strokeWidth={10} strokeLinecap="butt" />
-            <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
-              fill="none" stroke={cfg.color} strokeWidth={10} strokeLinecap="butt"
-              strokeDasharray={`${fill} ${pLen}`}
-              style={{ transition:"stroke-dasharray 0.7s ease" }} />
-            <text x={cx} y={cy-4} textAnchor="middle" fontSize={22} fontWeight={800}
-              fontFamily={T.sans} fill={T.ink}>{Math.round(score)}</text>
-            <text x={cx} y={cy+12} textAnchor="middle" fontSize={9} fontWeight={600}
-              fontFamily={T.sans} fill={T.inkMid} letterSpacing="0.1em">DISRUPTION</text>
-          </svg>
-          <DisruptionPill level={kpi?.disruption_level} />
-        </div>
-
-        <div style={{ flex:1 }}>
-          <div style={{ fontSize:18, fontWeight:800, color:T.ink, marginBottom:4 }}>{name}</div>
-          <div style={{ fontSize:12, color:T.inkMid, marginBottom:12 }}>
-            as of {kpi?.last_date || "—"}
-            {kpi?.data_lag_days > 0 && (
-              <span style={{ color:T.amber, marginLeft:6 }}>({kpi.data_lag_days}d lag)</span>
-            )}
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.6rem 1.2rem" }}>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>vs 90-day normal</div>
-              <div style={{ fontSize:16, fontWeight:700, color:(kpi?.pct_vs_normal ?? 0) > 0 ? T.red : T.green }}>
-                {kpi?.pct_vs_normal != null ? `${kpi.pct_vs_normal > 0 ? "+" : ""}${kpi.pct_vs_normal.toFixed(1)}%` : "—"}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Trend</div>
-              <div style={{ fontSize:13, fontWeight:700, display:"flex", alignItems:"center", gap:4,
-                color: kpi?.trend === "rising" ? T.red : kpi?.trend === "falling" ? T.green : T.amber }}>
-                {kpi?.trend === "rising"  ? <TrendingUp size={14} /> :
-                 kpi?.trend === "falling" ? <TrendingDown size={14} /> : <Minus size={14} />}
-                {kpi?.trend || "—"}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Ships today</div>
-              <div style={{ fontSize:16, fontWeight:700, color:T.ink }}>{kpi?.n_total ?? "—"}</div>
-            </div>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Avg daily</div>
-              <div style={{ fontSize:16, fontWeight:700, color:T.ink }}>
-                {kpi?.avg_daily_transits != null ? kpi.avg_daily_transits.toFixed(1) : "—"}
-              </div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* 90-day history + vessel mix */}
-      <div style={{ display:"grid", gridTemplateColumns:"1.6fr 1fr", gap:"1rem" }}>
-        <Card style={{ padding:"1rem 1.1rem" }}>
-          <Label style={{ marginBottom:10 }}>90-Day Disruption History</Label>
-          <ChokepointHistoryChart history={history} />
-        </Card>
-
-        <Card style={{ padding:"1rem 1.1rem" }}>
-          <Label style={{ marginBottom:10 }}>Transit Mix (6 months)</Label>
-          <ResponsiveContainer width="100%" height={120}>
-            <BarChart data={(vessel_mix || []).slice(-6)} margin={{ top:4, right:4, bottom:0, left:0 }}>
-              <CartesianGrid strokeDasharray="2 4" stroke={T.border} vertical={false} />
-              <XAxis dataKey="month" tickFormatter={d => d?.slice(5,7)+"/"+d?.slice(2,4)}
-                tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false} width={24} />
-              <Tooltip content={({ active, payload, label }) => {
-                if (!active || !payload?.length) return null;
-                return (
-                  <div style={{ background:T.slate, border:`1px solid ${T.borderL}`, borderRadius:8, padding:"0.5rem 0.75rem", fontSize:11 }}>
-                    <div style={{ color:T.inkMid, marginBottom:3 }}>{label}</div>
-                    {payload.map((p, i) => (
-                      <div key={i} style={{ color:p.color, fontWeight:600 }}>
-                        {p.name}: {typeof p.value === "number" ? p.value.toFixed(0) : p.value}
-                      </div>
-                    ))}
-                  </div>
-                );
-              }} />
-              {VESSEL_TRANSIT_CFG.map(v => (
-                <Bar key={v.key} dataKey={v.key} stackId="a" fill={v.color} name={v.label} />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:"6px 10px", marginTop:8 }}>
-            {VESSEL_TRANSIT_CFG.map(v => (
-              <span key={v.key} style={{ display:"flex", alignItems:"center", gap:3, fontSize:9, color:T.inkDim }}>
-                <span style={{ width:6, height:6, borderRadius:2, background:v.color, display:"inline-block" }} />
-                {v.label}
-              </span>
-            ))}
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function ChokepointView() {
-  const { data, loading } = useChokepoints();
-  const [selected, setSelected] = useState(null);
-  const chokepoints = data?.chokepoints || [];
-
-  useEffect(() => {
-    if (chokepoints.length && !selected) {
-      const suez = chokepoints.find(c => c.portname === "Suez Canal");
-      setSelected(suez?.portname || chokepoints[0]?.portname);
-    }
-  }, [chokepoints, selected]);
-
-  if (loading) return <Spinner />;
-
-  const high   = chokepoints.filter(c => c.disruption_level === "HIGH").length;
-  const medium = chokepoints.filter(c => c.disruption_level === "MEDIUM").length;
-
-  return (
-    <div style={{ display:"flex", height:"100%", overflow:"hidden" }}>
-
-      {/* Chokepoint list */}
-      <div style={{
-        width:220, flexShrink:0, borderRight:`1px solid ${T.border}`,
-        display:"flex", flexDirection:"column", overflow:"hidden",
-      }}>
-        {/* Summary bar */}
-        <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
-          <Label style={{ marginBottom:8 }}>Global Chokepoints</Label>
-          <div style={{ display:"flex", gap:8 }}>
-            <span style={{ fontSize:10, padding:"2px 7px", borderRadius:4,
-              background:T.redBg, color:T.red, fontWeight:700 }}>
-              {high} HIGH
-            </span>
-            <span style={{ fontSize:10, padding:"2px 7px", borderRadius:4,
-              background:T.amberBg, color:T.amber, fontWeight:700 }}>
-              {medium} WATCH
-            </span>
-          </div>
-        </div>
-        <div style={{ overflowY:"auto", flex:1, padding:"0.5rem" }}>
-          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-            {chokepoints.map(c => (
-              <ChokepointCard
-                key={c.portname}
-                chk={c}
-                isSelected={selected === c.portname}
-                onClick={() => setSelected(c.portname)}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Detail */}
-      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.25rem" }}>
-        {selected
-          ? <ChokepointDetailPanel name={selected} />
-          : <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
-              height:"100%", color:T.inkDim, fontSize:14 }}>
-              Select a chokepoint
-            </div>
-        }
-      </div>
-    </div>
-  );
-}
-
 /* ─────────────────────────────────────────────────────────
    WEATHER COMPONENTS
 ───────────────────────────────────────────────────────── */
@@ -1308,7 +1003,7 @@ function SupplyChainRiskCard({ port }) {
         </span>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:"0.6rem" }}>
+      <div style={{ display:"grid", gridTemplateColumns:`repeat(${Math.min(chokepoints.length, 4)}, 1fr)`, gap:"0.6rem" }}>
         {chokepoints.map(c => {
           const cfg = DISRUPTION_CFG[c.disruption_level] || DISRUPTION_CFG.LOW;
           const score = c.disruption_score ?? 0;
@@ -1349,6 +1044,19 @@ function SupplyChainRiskCard({ port }) {
               <div style={{ fontSize:9, color:T.inkDim }}>
                 {c.n_total ?? 0} ships · avg {c.avg_daily_transits?.toFixed(0) ?? "—"}/day
               </div>
+
+              {/* Transit lag + impact note */}
+              {c.lag_days && (
+                <div style={{
+                  fontSize:8,
+                  color: c.disruption_level === "HIGH" ? cfg.color : T.inkDim,
+                  fontWeight: c.disruption_level === "HIGH" ? 600 : 400,
+                  borderTop:`1px solid ${T.border}`,
+                  paddingTop:4, marginTop:1,
+                }}>
+                  {c.impact_note || `~${c.lag_days}d transit to port`}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1953,7 +1661,7 @@ function RiskAssessmentCard({ port }) {
 export default function App() {
   const [port,  setPort]  = useState("");
   const [model, setModel] = useState("Prophet");
-  const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "chokepoints" | "advisor"
+  const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "advisor"
   const { isDark, toggle: toggleTheme } = useTheme();
 
   const { data: portData }                    = usePortList();
@@ -1988,13 +1696,14 @@ export default function App() {
       <style>{GLOBAL_CSS}</style>
       <div style={{ display:"flex", height:"100vh", overflow:"hidden" }}>
 
-        {/* ── LEFT SIDEBAR ─────────────────────────────── */}
+        {/* ── LEFT SIDEBAR (Port Intelligence only) ────── */}
         <aside style={{
-          width:210, flexShrink:0,
+          width: tab === "ports" ? 210 : 0, flexShrink:0,
           background: T.navy2,
-          borderRight:`1px solid ${T.border}`,
+          borderRight: tab === "ports" ? `1px solid ${T.border}` : "none",
           display:"flex", flexDirection:"column",
           overflow:"hidden",
+          transition:"width 0.2s ease",
         }}>
           {/* Logo */}
           <div style={{ padding:"1rem 1rem 0.85rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
@@ -2013,69 +1722,73 @@ export default function App() {
             </div>
           </div>
 
-          {/* Model selector */}
-          <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
-            <Label style={{ marginBottom:7 }}>Forecast Model</Label>
-            <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-              {["Prophet", "ARIMA", "XGBoost"].map(m => (
-                <button key={m} onClick={() => setModel(m)} style={{
-                  display:"flex", alignItems:"center", justifyContent:"space-between",
-                  padding:"0.3rem 0.6rem", borderRadius:6, border:"none", cursor:"pointer",
-                  background: model === m ? T.tealBg : "transparent",
-                  color: model === m ? T.teal : T.inkMid,
-                  fontFamily: T.sans, fontSize:12, fontWeight: model === m ? 700 : 400,
-                  textAlign:"left", transition:"all 0.15s",
-                }}>
-                  {m}
-                  {recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Most anomalous ports — z-score ranking */}
-          <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
-            display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
-            <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
-                <Label>Most Anomalous Ports</Label>
-                <span
-                  title={anomalousData?.description || "Ports ranked by per-port z-score deviation from their own historical baseline. Highlights ports having unusual days, NOT necessarily the most loaded ports."}
-                  style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
-                >
-                  <Info size={10} />
-                </span>
+          {tab === "ports" && (
+            <>
+              {/* Model selector */}
+              <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
+                <Label style={{ marginBottom:7 }}>Forecast Model</Label>
+                <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+                  {["Prophet", "ARIMA", "XGBoost"].map(m => (
+                    <button key={m} onClick={() => setModel(m)} style={{
+                      display:"flex", alignItems:"center", justifyContent:"space-between",
+                      padding:"0.3rem 0.6rem", borderRadius:6, border:"none", cursor:"pointer",
+                      background: model === m ? T.tealBg : "transparent",
+                      color: model === m ? T.teal : T.inkMid,
+                      fontFamily: T.sans, fontSize:12, fontWeight: model === m ? 700 : 400,
+                      textAlign:"left", transition:"all 0.15s",
+                    }}>
+                      {m}
+                      {recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
-            </div>
-            <SidebarPortsList
-              topPorts={anomalousData?.ports}
-              selectedPort={port}
-              onSelect={setPort}
-            />
-          </div>
 
-          {/* Most loaded ports — absolute current portcalls */}
-          <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
-            display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
-            <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
-                <Label>Most Loaded Ports</Label>
-                <span
-                  title={loadedData?.description || "Ports ranked by absolute current vessel call volume. Highlights the busiest ports right now."}
-                  style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
-                >
-                  <Info size={10} />
-                </span>
+              {/* Most anomalous ports — z-score ranking */}
+              <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
+                display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
+                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                    <Label>Most Anomalous Ports</Label>
+                    <span
+                      title={anomalousData?.description || "Ports ranked by per-port z-score deviation from their own historical baseline. Highlights ports having unusual days, NOT necessarily the most loaded ports."}
+                      style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
+                    >
+                      <Info size={10} />
+                    </span>
+                  </div>
+                  <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
+                </div>
+                <SidebarPortsList
+                  topPorts={anomalousData?.ports}
+                  selectedPort={port}
+                  onSelect={setPort}
+                />
               </div>
-              <span style={{ fontSize:9, color: T.inkDim }}>portcalls</span>
-            </div>
-            <SidebarLoadedPortsList
-              loadedPorts={loadedData?.ports}
-              selectedPort={port}
-              onSelect={setPort}
-            />
-          </div>
+
+              {/* Most loaded ports — absolute current portcalls */}
+              <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
+                display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
+                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                    <Label>Most Loaded Ports</Label>
+                    <span
+                      title={loadedData?.description || "Ports ranked by absolute current vessel call volume. Highlights the busiest ports right now."}
+                      style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
+                    >
+                      <Info size={10} />
+                    </span>
+                  </div>
+                  <span style={{ fontSize:9, color: T.inkDim }}>portcalls</span>
+                </div>
+                <SidebarLoadedPortsList
+                  loadedPorts={loadedData?.ports}
+                  selectedPort={port}
+                  onSelect={setPort}
+                />
+              </div>
+            </>
+          )}
 
           {/* Bottom status */}
           <div style={{ padding:"0.6rem 0.9rem", borderTop:`1px solid ${T.border}`, flexShrink:0 }}>
@@ -2099,7 +1812,7 @@ export default function App() {
             {/* Tab switcher */}
             <div style={{ display:"flex", alignItems:"center", gap:4,
               background:T.navy3, borderRadius:8, padding:3, border:`1px solid ${T.border}` }}>
-              {[["ports","Port Intelligence"],["vessels","Live Vessels"],["chokepoints","Chokepoints"],["advisor","AI Advisor"]].map(([key, label]) => (
+              {[["ports","Port Intelligence"],["vessels","Live Vessels"],["advisor","AI Advisor"]].map(([key, label]) => (
                 <button key={key} onClick={() => setTab(key)} style={{
                   padding:"0.3rem 0.85rem", borderRadius:6, border:"none", cursor:"pointer",
                   background: tab === key ? T.teal : "transparent",
@@ -2128,11 +1841,6 @@ export default function App() {
                     <div style={{ fontSize:10, color:T.inkDim, display:"flex", alignItems:"center", gap:4 }}>
                       <Calendar size={10} />
                       Last data: {kpi.last_date}
-                      {kpi.data_lag_days > 0 && (
-                        <span style={{ color: kpi.data_lag_days > 7 ? T.amber : T.inkDim }}>
-                          ({kpi.data_lag_days}d ago)
-                        </span>
-                      )}
                     </div>
                   )}
                 </>
@@ -2159,10 +1867,6 @@ export default function App() {
           ) : tab === "advisor" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
               <AiAdvisor port={port} onSelectPort={setPort} />
-            </div>
-          ) : tab === "chokepoints" ? (
-            <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
-              <ChokepointView />
             </div>
           ) : !port ? (
             <div style={{ display:"flex", alignItems:"center", justifyContent:"center",

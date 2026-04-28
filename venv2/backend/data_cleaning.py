@@ -53,7 +53,7 @@ def load_and_clean(filepath: str = None) -> pd.DataFrame:
         from pathlib import Path
         csv_path = filepath or str(Path(__file__).parent / "portwatch_us_data.csv")
         logger.info(f"Loading port data from CSV: {csv_path}")
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, low_memory=False)
 
     # ── Rename columns ─────────────────────────────────────────────────────
     df = df.rename(columns=RENAME_MAP)
@@ -134,7 +134,7 @@ def load_and_clean_chokepoints(filepath: str = None) -> pd.DataFrame:
         from pathlib import Path
         csv_path = filepath or str(Path(__file__).parent / "chokepoint_data.csv")
         logger.info(f"Loading chokepoint data from CSV: {csv_path}")
-        df = pd.read_csv(csv_path, on_bad_lines="skip")
+        df = pd.read_csv(csv_path, low_memory=False, on_bad_lines="skip")
 
     # ── Parse dates ─────────────────────────────────────────────────────────
     df["date"] = pd.to_datetime(df["date"], errors="coerce")

@@ -5,107 +5,67 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: dockwise-backend
-  ECS_CLUSTER: dockwise-cluster
-  ECS_SERVICE: dockwise-backend
-
 jobs:
-  # ── Backend: Docker → ECR → ECS Fargate ─────────────────────────────────────
+
+  # ── Backend: deploy to Render ────────────────────────────────────────────────
   deploy-backend:
+    name: Deploy Backend to Render
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push image
-        id: build
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Trigger Render backend deploy
         run: |
-          docker build \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            ./venv2/backend
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" \
+            --retry 3 --retry-delay 5)
+          echo "Response: $(cat /tmp/res.json)"
+          [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || [ "$HTTP_STATUS" = "202" ] || (echo "Render deploy failed: $HTTP_STATUS" && exit 1)
 
-      - name: Render ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: infra/ecs-task-definition.json
-          container-name: dockwise-backend
-          image: ${{ steps.build.outputs.image }}
+      - name: Wait for backend to be healthy
+        run: |
+          echo "Waiting for backend to come up..."
+          for i in $(seq 1 24); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.BACKEND_URL }}/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "Backend is healthy"
+              exit 0
+            fi
+            echo "Attempt $i — status $STATUS, retrying in 10s..."
+            sleep 10
+          done
+          echo "Backend did not become healthy in time"
+          exit 1
 
-      - name: Deploy to ECS Fargate
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-  # ── Frontend: React build → S3 → CloudFront ─────────────────────────────────
+  # ── Frontend: build and deploy to Render static site ─────────────────────────
   deploy-frontend:
+    name: Deploy Frontend to Render
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Trigger Render frontend deploy
+        run: |
+          HTTP_STATUS=$(curl -s -o /tmp/res.json -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK_URL }}" \
+            --retry 3 --retry-delay 5)
+          echo "Response: $(cat /tmp/res.json)"
+          [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ] || [ "$HTTP_STATUS" = "202" ] || (echo "Render frontend deploy failed: $HTTP_STATUS" && exit 1)
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+  # ── Notify on failure ────────────────────────────────────────────────────────
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    if: failure()
+    steps:
+      - name: Send failure email
+        uses: dawidd6/action-send-mail@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.NOTIFY_EMAIL }}
+          password: ${{ secrets.NOTIFY_EMAIL_PASSWORD }}
+          to: darshinilatha2000@gmail.com
+          subject: "DockWise Deploy FAILED — ${{ github.run_id }}"
+          body: |
+            A deployment failed on branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: venv2/frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: venv2/frontend
-
-      - name: Build React app
-        run: npm run build
-        working-directory: venv2/frontend
-        env:
-          REACT_APP_API_URL: ${{ secrets.BACKEND_URL }}
-          REACT_APP_AIS_URL: ${{ secrets.REACT_APP_AIS_URL }}
-          CI: false
-
-      - name: Sync static assets to S3 (long cache)
-        run: |
-          aws s3 sync venv2/frontend/build/ s3://${{ secrets.S3_BUCKET_NAME }} \
-            --delete \
-            --exclude "index.html" \
-            --cache-control "public,max-age=31536000,immutable"
-
-      - name: Upload index.html (no cache)
-        run: |
-          aws s3 cp venv2/frontend/build/index.html \
-            s3://${{ secrets.S3_BUCKET_NAME }}/index.html \
-            --cache-control "no-cache,no-store,must-revalidate"
-
-      - name: Invalidate CloudFront
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths "/*"
+            View logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

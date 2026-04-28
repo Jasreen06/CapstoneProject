@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+import threading
 import warnings
 from pathlib import Path
 
@@ -45,10 +46,54 @@ from forecast_tracker import save_forecast, validate, get_log
 LEADING_CHOKEPOINTS = ["Suez Canal", "Panama Canal", "Strait of Hormuz", "Malacca Strait"]
 
 # Port region → relevant upstream chokepoints + typical transit lag (days)
-_WEST_COAST  = ["Malacca Strait", "Taiwan Strait", "Panama Canal", "Luzon Strait"]
-_GULF_COAST  = ["Panama Canal", "Strait of Hormuz", "Bab el-Mandeb Strait", "Suez Canal"]
-_EAST_COAST  = ["Suez Canal", "Bab el-Mandeb Strait", "Panama Canal", "Dover Strait"]
-_GREAT_LAKES = ["Suez Canal", "Panama Canal", "Dover Strait", "Gibraltar Strait"]
+_WEST_COAST  = ["Malacca Strait", "Taiwan Strait", "Panama Canal", "Luzon Strait",
+                "Korea Strait", "Lombok Strait", "Bering Strait"]
+_GULF_COAST  = ["Panama Canal", "Strait of Hormuz", "Bab el-Mandeb Strait", "Suez Canal",
+                "Yucatan Channel", "Windward Passage", "Cape of Good Hope", "Mona Passage"]
+_EAST_COAST  = ["Suez Canal", "Bab el-Mandeb Strait", "Panama Canal", "Dover Strait",
+                "Gibraltar Strait", "Cape of Good Hope", "Windward Passage", "Mona Passage"]
+_GREAT_LAKES = ["Suez Canal", "Panama Canal", "Dover Strait", "Gibraltar Strait",
+                "Oresund Strait"]
+
+# Transit lag in days from chokepoint to port region (average ocean transit times)
+_TRANSIT_LAG = {
+    "west": {
+        "Malacca Strait":      16,   # Singapore → West Coast via Transpacific
+        "Taiwan Strait":       14,   # Taiwan → West Coast
+        "Panama Canal":        14,   # Panama → West Coast (northbound Pacific)
+        "Luzon Strait":        16,   # Philippines → West Coast
+        "Korea Strait":        12,   # South Korea/Japan → West Coast
+        "Lombok Strait":       18,   # Indonesia alternative to Malacca → West Coast
+        "Bering Strait":        5,   # Arctic → Alaska/West Coast
+    },
+    "gulf": {
+        "Panama Canal":         5,   # Panama → Gulf (short Caribbean transit)
+        "Strait of Hormuz":    35,   # Persian Gulf → Gulf Coast via Cape/Suez
+        "Bab el-Mandeb Strait":28,   # Red Sea → Gulf Coast via Atlantic
+        "Suez Canal":          30,   # Med → Gulf Coast via Atlantic
+        "Yucatan Channel":      2,   # Mexico/Caribbean → Gulf (adjacent)
+        "Windward Passage":     3,   # Caribbean → Gulf
+        "Cape of Good Hope":   25,   # South Africa → Gulf Coast via Atlantic
+        "Mona Passage":         3,   # Caribbean → Gulf
+    },
+    "east": {
+        "Suez Canal":          28,   # Med → East Coast via Atlantic
+        "Bab el-Mandeb Strait":25,   # Red Sea → East Coast via Suez + Atlantic
+        "Panama Canal":         8,   # Panama → East Coast (short Caribbean transit)
+        "Dover Strait":        12,   # English Channel → East Coast
+        "Gibraltar Strait":    14,   # Med → East Coast via Atlantic
+        "Cape of Good Hope":   22,   # South Africa → East Coast
+        "Windward Passage":     3,   # Caribbean → East Coast
+        "Mona Passage":         3,   # Caribbean → East Coast
+    },
+    "lakes": {
+        "Suez Canal":          35,   # Med → Great Lakes via Atlantic + St. Lawrence
+        "Panama Canal":        15,   # Panama → Great Lakes via Atlantic + St. Lawrence
+        "Dover Strait":        18,   # English Channel → Great Lakes
+        "Gibraltar Strait":    20,   # Med → Great Lakes
+        "Oresund Strait":      20,   # Baltic Sea → Great Lakes
+    },
+}
 
 _WEST_KEYWORDS  = ["los angeles","long beach","seattle","tacoma","oakland","san diego",
                     "portland","san francisco","everett","olympia","anchorage","honolulu",
@@ -60,15 +105,27 @@ _LAKES_KEYWORDS = ["chicago","detroit","cleveland","toledo","gary","duluth","mil
                     "indiana harbor","ashtabula","burns harbor","sandusky","presque isle",
                     "muskegon","green bay","port huron","superior"]
 
-def _get_port_chokepoints(port: str) -> list[str]:
+def _get_port_region(port: str) -> str:
+    """Return the region key for a port."""
     p = port.lower()
     if any(k in p for k in _WEST_KEYWORDS):
-        return _WEST_COAST
+        return "west"
     if any(k in p for k in _GULF_KEYWORDS):
-        return _GULF_COAST
+        return "gulf"
     if any(k in p for k in _LAKES_KEYWORDS):
-        return _GREAT_LAKES
-    return _EAST_COAST  # default: East Coast
+        return "lakes"
+    return "east"
+
+def _get_port_chokepoints(port: str) -> list[str]:
+    region = _get_port_region(port)
+    mapping = {"west": _WEST_COAST, "gulf": _GULF_COAST,
+               "lakes": _GREAT_LAKES, "east": _EAST_COAST}
+    return mapping[region]
+
+def _get_transit_lag(port: str, chokepoint: str) -> int:
+    """Return transit lag in days from chokepoint to port."""
+    region = _get_port_region(port)
+    return _TRANSIT_LAG.get(region, {}).get(chokepoint, 21)  # default 21 days
 
 app = FastAPI(title="DockWise AI — PortWatch API", version="1.0")
 
@@ -85,8 +142,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-COMPARISON_FILE = "model_comparison_results.json"
-CRON_SECRET     = os.environ.get("CRON_SECRET", "")
+CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 # AIS microservice base URL (Phase 6A — staleness reconciliation)
 AIS_BASE_URL = os.environ.get("AIS_BASE_URL", "http://localhost:8001")
@@ -123,11 +179,12 @@ def _fetch_ais_anchor_stats(lat: float, lon: float, port_name: str,
 # ──────────────────────────────────────────────
 
 _cache: dict = {}
+_score_lock = threading.Lock()
 
 
 @app.on_event("startup")
 async def ensure_data():
-    """Init DB tables and auto-pull data if the DB is empty."""
+    """Init DB tables on startup. Data pull runs via GitHub Actions daily cron."""
     try:
         from db import init_tables, get_engine
         init_tables()
@@ -136,10 +193,9 @@ async def ensure_data():
         with engine.connect() as conn:
             count = conn.execute(text("SELECT COUNT(*) FROM port_data")).scalar()
         if count == 0:
-            logger.info("DB empty — pulling port data from PortWatch API...")
-            data_pull.run_ports()
-            data_pull.run_chokepoints()
-            logger.info("Initial data pull complete.")
+            logger.warning("DB is empty — trigger data pull via GitHub Actions or POST /admin/run-data-pull")
+        else:
+            logger.info(f"Startup OK — {count} port records in DB.")
     except Exception as e:
         logger.error(f"Startup data check failed: {e}")
 
@@ -163,25 +219,139 @@ def get_chokepoint_df() -> pd.DataFrame:
 
 
 def get_scored_df() -> pd.DataFrame:
-    if "scored" not in _cache:
+    if "scored" in _cache:
+        return _cache["scored"]
+    with _score_lock:
+        if "scored" in _cache:          # another thread finished while we waited
+            return _cache["scored"]
         df = get_df()
         scored = df.sort_values(["portname", "date"]).copy()
 
         def _congestion_series(s: pd.Series) -> pd.Series:
             rolling_mean = s.rolling(90, min_periods=1).mean()
             rolling_std  = s.rolling(90, min_periods=1).std().replace(0, np.nan)
+            rolling_std  = rolling_std.clip(lower=2.0)
             z = ((s - rolling_mean) / rolling_std).fillna(0).clip(-3, 3)
             return ((z + 3) / 6 * 100).round(1)
 
-        # transform preserves all columns including the groupby key (portname)
         scored["congestion_score"] = (
             scored.groupby("portname")["portcalls"].transform(_congestion_series)
         )
         scored["traffic_level"] = scored["congestion_score"].apply(
             lambda x: "HIGH" if x >= 67 else ("MEDIUM" if x >= 33 else "LOW")
         )
+
+        logger.info("[V2] Computing Prophet+XGBoost scores for all ports (one-time startup)...")
+        _apply_v2_latest_scores(scored)
+
         _cache["scored"] = scored
     return _cache["scored"]
+
+
+def _apply_v2_latest_scores(scored: pd.DataFrame) -> None:
+    """
+    Override the last row's congestion_score per port with the V2 ensemble
+    (Prophet + XGBoost + residual std + momentum) for more accurate scoring.
+    Falls back to rolling z-score if Prophet fails for a given port.
+    """
+    try:
+        from prophet import Prophet
+        from forecasting import XGBoostModel
+    except ImportError:
+        logger.warning("[V2] Prophet/XGBoost not available — using rolling fallback")
+        return
+
+    # Only run V2 for top 20 ports by total portcalls (faster startup)
+    port_totals = scored.groupby("portname")["portcalls"].sum()
+    top20 = set(port_totals.nlargest(20).index)
+    logger.info(f"[V2] Running ensemble for top 20 ports: {sorted(top20)}")
+
+    port_groups = scored.groupby("portname")
+    v2_count = 0
+
+    for portname, group in port_groups:
+        if portname not in top20:
+            continue
+        daily = group.sort_values("date").copy()
+        if len(daily) < 90:
+            continue
+
+        vals = daily["portcalls"].values.astype(float)
+        current_val = float(vals[-1])
+        last_idx = daily.index[-1]
+
+        try:
+            # Prophet baseline
+            train = daily.iloc[:-1][["date", "portcalls"]].rename(
+                columns={"date": "ds", "portcalls": "y"})
+            train["y"] = pd.to_numeric(train["y"], errors="coerce").fillna(0).clip(lower=0)
+            mode = "multiplicative" if train["y"].min() > 0 else "additive"
+            if mode == "multiplicative":
+                train["y"] = train["y"].replace(0, 1e-6)
+
+            m = Prophet(
+                yearly_seasonality=True, weekly_seasonality=True,
+                daily_seasonality=False, seasonality_mode=mode,
+                changepoint_prior_scale=0.05, uncertainty_samples=200,
+            )
+            m.fit(train)
+            fcst = m.predict(pd.DataFrame({"ds": [daily["date"].iloc[-1]]}))
+            expected = float(max(fcst["yhat"].iloc[0], 0))
+
+            # XGBoost ensemble (60/40)
+            try:
+                xgb_model = XGBoostModel()
+                xgb_model.fit(daily.iloc[:-1])
+                xgb_fcst = xgb_model.predict(horizon=1)
+                xgb_pred = float(max(xgb_fcst["yhat"].iloc[0], 0))
+                mean_baseline = 0.6 * expected + 0.4 * xgb_pred
+            except Exception:
+                mean_baseline = expected
+
+            # Residual std from 80/20 split
+            n = len(daily)
+            split = int(n * 0.8)
+            if split >= 90:
+                tr80 = daily.iloc[:split][["date", "portcalls"]].rename(
+                    columns={"date": "ds", "portcalls": "y"})
+                tr80["y"] = pd.to_numeric(tr80["y"], errors="coerce").fillna(0).clip(lower=0)
+                md = "multiplicative" if tr80["y"].min() > 0 else "additive"
+                if md == "multiplicative":
+                    tr80["y"] = tr80["y"].replace(0, 1e-6)
+                m2 = Prophet(
+                    yearly_seasonality=True, weekly_seasonality=True,
+                    daily_seasonality=False, seasonality_mode=md,
+                    changepoint_prior_scale=0.05, uncertainty_samples=200,
+                )
+                m2.fit(tr80)
+                val_pred = m2.predict(pd.DataFrame({"ds": daily.iloc[split:]["date"].values}))
+                residuals = vals[split:] - np.maximum(val_pred["yhat"].values, 0)
+                std_est = max(float(np.std(residuals)), 2.0)
+            else:
+                std_est = max(float(vals[-90:].std()), 2.0)
+
+            # 3-day momentum
+            if len(vals) >= 4:
+                momentum = float(np.mean(np.diff(vals[-4:])))
+            else:
+                momentum = 0.0
+            adjusted_val = max(current_val + momentum, 0)
+
+            # V2 congestion score
+            z = float(np.clip((adjusted_val - mean_baseline) / std_est, -3, 3))
+            v2_score = round((z + 3) / 6 * 100, 1)
+
+            scored.at[last_idx, "congestion_score"] = v2_score
+            scored.at[last_idx, "traffic_level"] = (
+                "HIGH" if v2_score >= 67 else ("MEDIUM" if v2_score >= 33 else "LOW")
+            )
+            v2_count += 1
+
+        except Exception as e:
+            logger.debug(f"[V2] {portname} fell back to rolling: {e}")
+            continue
+
+    logger.info(f"[V2] Prophet+XGBoost ensemble applied to {v2_count} ports")
 
 
 # ──────────────────────────────────────────────
@@ -630,6 +800,11 @@ def forecast(
     if model not in ALL_MODELS:
         raise HTTPException(400, f"model must be one of {ALL_MODELS}")
 
+    # Return cached result if available (cache key: port+model+horizon)
+    cache_key = f"forecast:{port}:{model}:{horizon}"
+    if cache_key in _cache:
+        return _cache[cache_key]
+
     df    = get_df()
     daily = get_port_daily_series(df, port)
     if daily.empty:
@@ -689,40 +864,13 @@ def forecast(
     hist["congestion_score"] = hist["congestion_score"].fillna(50.0).round(1)
     hist["portcalls_smooth"] = hist["portcalls"].rolling(3, min_periods=1).mean().round(2)
 
-    # ── Log predictions for ALL 3 models for validation later ────────────
-    # Always logs all models regardless of which one the user requested.
-    # This gives a complete comparison when actual data arrives.
+    # Log only the requested model's forecast (skip background fitting of other models)
     try:
-        # Always save the requested model first (already fitted above)
         save_forecast(port, model, fcst)
-
-        # Fit and save the other two models in the background
-        other_models = [m for m in ALL_MODELS if m != model]
-        for other in other_models:
-            try:
-                om = get_model(other)
-                if other == "XGBoost":
-                    try:
-                        chk_df = get_chokepoint_df()
-                        chk_data = {
-                            name: get_chokepoint_daily_series(chk_df, name)
-                            for name in LEADING_CHOKEPOINTS
-                            if name in chk_df["portname"].values
-                        }
-                        om.fit(daily, chokepoint_data=chk_data)
-                    except Exception:
-                        om.fit(daily)
-                else:
-                    om.fit(daily)
-                other_fcst = om.predict(horizon=horizon)
-                save_forecast(port, other, other_fcst)
-                logger.info(f"Forecast tracker: logged {other} predictions for {port}")
-            except Exception as e:
-                logger.warning(f"Forecast tracker: could not log {other} for {port}: {e}")
     except Exception as e:
         logger.warning(f"Forecast tracker save failed: {e}")
 
-    return {
+    result = {
         "port":        port,
         "model":       model,
         "horizon":     horizon,
@@ -730,20 +878,28 @@ def forecast(
         "history":     _df_to_records(hist),
         "forecast":    _df_to_records(fcst),
     }
+    _cache[cache_key] = result
+    return result
 
 
 @app.get("/api/model-comparison")
 def model_comparison_results():
-    """Return saved model comparison results (run model_comparison.py first)."""
-    if not Path(COMPARISON_FILE).exists():
-        return {
-            "available": False,
-            "message": f"Run 'python model_comparison.py' to generate {COMPARISON_FILE}",
-        }
-    with open(COMPARISON_FILE) as f:
-        data = json.load(f)
-    data["available"] = True
-    return data
+    """Return saved model comparison results."""
+    try:
+        from db import get_engine
+        from sqlalchemy import text
+        engine = get_engine()
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT results FROM model_comparison_results ORDER BY saved_at DESC LIMIT 1"
+            )).fetchone()
+        if not row:
+            return {"available": False, "message": "No results yet. Trigger via /api/model-comparison/run"}
+        data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        data["available"] = True
+        return data
+    except Exception as e:
+        raise HTTPException(503, f"Could not load model comparison results: {e}")
 
 
 @app.get("/api/metrics")
@@ -787,6 +943,53 @@ def compute_metrics(
     return {"port": port, "model": model, "metrics": {k: _safe_float(v) for k, v in metrics.items()}}
 
 
+def _compute_correlation(port: str, chk_name: str, lag_days: int) -> dict:
+    """
+    Compute lagged anomaly correlation between a chokepoint and a port.
+    Uses 30-day detrended, 7-day smoothed anomalies.
+    Returns correlation value and strength label.
+    """
+    try:
+        port_df = get_df()
+        port_daily = get_port_daily_series(port_df, port)
+        chk_daily = get_chokepoint_daily_series(get_chokepoint_df(), chk_name)
+
+        merged = port_daily[["date", "portcalls"]].merge(
+            chk_daily[["date", "n_total"]].rename(columns={"n_total": "chk"}),
+            on="date", how="inner",
+        )
+        if len(merged) < 180:
+            return {"correlation": 0.0, "strength": "insufficient data", "best_lag": lag_days}
+
+        # Detrend: subtract 30-day rolling mean
+        merged["port_anom"] = merged["portcalls"] - merged["portcalls"].rolling(30, min_periods=7).mean()
+        merged["chk_anom"]  = merged["chk"] - merged["chk"].rolling(30, min_periods=7).mean()
+
+        # Smooth with 7-day window
+        merged["port_s"] = merged["port_anom"].rolling(7, min_periods=1).mean()
+        merged["chk_s"]  = merged["chk_anom"].rolling(7, min_periods=1).mean()
+
+        # Search around expected lag for best correlation
+        best_corr, best_lag = 0.0, lag_days
+        for lag in range(max(0, lag_days - 7), lag_days + 14):
+            c = merged["port_s"].corr(merged["chk_s"].shift(lag))
+            if abs(c) > abs(best_corr):
+                best_corr, best_lag = float(c), lag
+
+        strength = ("strong" if abs(best_corr) >= 0.30
+                    else "moderate" if abs(best_corr) >= 0.15
+                    else "weak")
+
+        return {
+            "correlation": round(best_corr, 3),
+            "strength":    strength,
+            "best_lag":    best_lag,
+        }
+    except Exception as e:
+        logger.warning(f"Correlation failed for {port} ← {chk_name}: {e}")
+        return {"correlation": 0.0, "strength": "unavailable", "best_lag": lag_days}
+
+
 @app.get("/api/port-chokepoints")
 def port_chokepoints(port: str = Query(..., description="Port name")):
     """Return the upstream chokepoints relevant to a specific port with their current status."""
@@ -809,6 +1012,16 @@ def port_chokepoints(port: str = Query(..., description="Port name")):
         diff  = float(last7 - prior7) if (last7 == last7 and prior7 == prior7) else 0.0
         trend = "rising" if diff > 1 else ("falling" if diff < -1 else "stable")
 
+        lag_days = _get_transit_lag(port, name)
+
+        # Impact note based on disruption level
+        if last_row["disruption_level"] == "HIGH":
+            impact_note = f"Disruption detected — expect elevated arrivals in ~{lag_days} days"
+        elif last_row["disruption_level"] == "MEDIUM":
+            impact_note = f"Monitor — potential impact in ~{lag_days} days if disruption escalates"
+        else:
+            impact_note = f"Clear — normal transit flow, ~{lag_days}-day shipping lane"
+
         result.append({
             "portname":           name,
             "disruption_score":   _safe_float(last_row["disruption_score"]),
@@ -821,7 +1034,16 @@ def port_chokepoints(port: str = Query(..., description="Port name")):
                 round((float(last_row["disruption_score"]) - float(last90["disruption_score"].mean()))
                       / max(float(last90["disruption_score"].mean()), 1) * 100, 1)
             ),
+            "lag_days":           lag_days,
+            "impact_note":        impact_note,
         })
+
+    # Compute correlations (done after building result to avoid slowing the loop)
+    for item in result:
+        corr_data = _compute_correlation(port, item["portname"], item["lag_days"])
+        item["correlation"]  = corr_data["correlation"]
+        item["corr_strength"] = corr_data["strength"]
+        item["best_lag"]     = corr_data["best_lag"]
 
     return {"port": port, "chokepoints": result}
 
@@ -1126,13 +1348,17 @@ def risk_assessment(port: str = Query(..., description="Port name")):
     if port not in df["portname"].values:
         raise HTTPException(404, f"Port '{port}' not found.")
 
+    cache_key = f"risk:{port}"
+    if cache_key in _cache:
+        return _cache[cache_key]
+
     try:
         result = run_risk_assessment(port)
     except Exception as e:
         logger.error(f"/api/risk-assessment error: {e}")
         raise HTTPException(500, str(e))
 
-    return {
+    response = {
         "port":        result["port"],
         "risk_score":  result["risk_score"],
         "risk_tier":   result["risk_tier"],
@@ -1167,6 +1393,8 @@ def risk_assessment(port: str = Query(..., description="Port name")):
             },
         },
     }
+    _cache[cache_key] = response
+    return response
 
 
 # ── Advisor: Briefing (3A) ───────────────────────────────────
@@ -1438,11 +1666,7 @@ def run_model_comparison(x_cron_secret: str = Header(default="")):
     _check_cron_secret(x_cron_secret)
     try:
         from model_comparison import run_comparison
-        # filepath arg is ignored by load_and_clean() which reads from DB
-        results = run_comparison("portwatch_us_data.csv", top_n=5)
-        with open(COMPARISON_FILE, "w") as f:
-            json.dump(results, f, indent=2)
-        _cache.pop("comparison", None)
+        results = run_comparison(top_n=5)
         port_count = len(results.get("results", {}).get("ports", results.get("ports", [])))
         return {"status": "ok", "ports_evaluated": port_count}
     except Exception as e:
