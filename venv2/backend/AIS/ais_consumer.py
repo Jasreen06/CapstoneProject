@@ -140,50 +140,39 @@ async def _process_message(raw: str) -> None:
         logger.debug(f"Message parse error: {e}")
 
 
-BURST_DURATION_S = 90  # collect for 90 seconds per burst
-BURST_REST_S = 60      # rest 60 seconds between bursts
-
-
-async def connect_aisstream(duration: int = BURST_DURATION_S) -> int:
-    """Connect to aisstream.io, collect for `duration` seconds, then disconnect cleanly.
-    Returns number of messages processed."""
+async def connect_aisstream() -> None:
+    """Connect to aisstream.io and consume messages indefinitely."""
     subscription = {
         "APIKey": AISSTREAM_API_KEY,
         "BoundingBoxes": BOUNDING_BOXES,
         "FilterMessageTypes": MESSAGE_TYPES,
     }
 
-    logger.info(f"Connecting to aisstream.io (burst={duration}s)...")
-    count = 0
-    deadline = asyncio.get_event_loop().time() + duration
-
+    logger.info("Connecting to aisstream.io...")
     async with websockets.connect(
         WSS_URL,
-        ping_interval=20,
-        ping_timeout=30,
-        close_timeout=10,
+        ping_interval=30,
+        ping_timeout=10,
         max_size=2**23,
     ) as ws:
         await ws.send(json.dumps(subscription))
-        logger.info("AIS stream connected — collecting vessel data...")
+        logger.info("AIS stream connected — receiving live vessel data")
 
-        while asyncio.get_event_loop().time() < deadline:
-            try:
-                remaining = deadline - asyncio.get_event_loop().time()
-                raw = await asyncio.wait_for(ws.recv(), timeout=min(10.0, remaining))
-                await _process_message(raw)
-                count += 1
-            except asyncio.TimeoutError:
-                break
+        last_cleanup = datetime.now(timezone.utc)
 
-    vessel_count = len(await vessel_store.get_all_vessels())
-    logger.info(f"Burst complete — {count} messages processed, {vessel_count} vessels in store")
-    return count
+        async for raw in ws:
+            await _process_message(raw)
+
+            now = datetime.now(timezone.utc)
+            if (now - last_cleanup).seconds > 600:
+                removed = await vessel_store.cleanup_stale(max_age_minutes=30)
+                if removed:
+                    logger.info(f"Cleaned up {removed} stale vessels")
+                last_cleanup = now
 
 
 async def start_ais_consumer() -> None:
-    """Burst-mode loop: collect for BURST_DURATION_S, rest BURST_REST_S, repeat.
-    Short-lived connections avoid datacenter IP throttling by aisstream.io."""
+    """Persistent connection with exponential backoff on disconnect."""
     if not AISSTREAM_API_KEY:
         logger.warning("AISSTREAM_API_KEY not set — AIS consumer disabled")
         return
@@ -195,24 +184,17 @@ async def start_ais_consumer() -> None:
         try:
             await connect_aisstream()
             backoff = 5
-            logger.info(f"Resting {BURST_REST_S}s before next burst...")
-            await asyncio.sleep(BURST_REST_S)
         except ConnectionClosed as e:
             logger.warning(
                 f"AIS stream closed: code={e.rcvd.code if e.rcvd else 'none'} "
-                f"reason='{e.rcvd.reason if e.rcvd else 'none'}'. Retrying in {backoff}s..."
+                f"reason='{e.rcvd.reason if e.rcvd else 'none'}'. Reconnecting in {backoff}s..."
             )
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
         except WebSocketException as e:
-            logger.error(f"AIS WebSocket error: {e}. Retrying in {backoff}s...")
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
+            logger.error(f"AIS WebSocket error: {e}. Reconnecting in {backoff}s...")
         except OSError as e:
-            logger.error(f"AIS network error: {e}. Retrying in {backoff}s...")
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
+            logger.error(f"AIS network error: {e}. Reconnecting in {backoff}s...")
         except Exception as e:
-            logger.error(f"AIS unexpected error: {type(e).__name__}: {e}. Retrying in {backoff}s...")
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, max_backoff)
+            logger.error(f"AIS unexpected error: {type(e).__name__}: {e}. Reconnecting in {backoff}s...")
+
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, max_backoff)
