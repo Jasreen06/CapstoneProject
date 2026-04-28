@@ -59,6 +59,43 @@ const PORT_COORDS = {
   "Duluth": [46.78, -92.10], "Milwaukee": [43.04, -87.91],
   "Gary": [41.60, -87.35], "Green Bay": [44.52, -88.02],
   "Erie": [42.13, -80.08], "Ashtabula": [41.90, -80.79],
+  // ── Pacific Northwest ──
+  "Anacortes": [48.51, -122.61], "Cherry Point": [48.86, -122.74],
+  "Vancouver": [45.63, -122.67], "Kalama": [46.01, -122.84],
+  "Aberdeen": [46.98, -123.81],
+  // ── California ──
+  "Richmond, CA": [37.93, -122.36], "Benicia": [38.04, -122.16],
+  "Stockton": [37.95, -121.31], "EL Segundo": [33.92, -118.43],
+  "Rodeo": [38.03, -122.27],
+  // ── Alaska / Hawaii ──
+  "Nikiski": [60.68, -151.30], "Barbor's Point": [21.32, -158.12],
+  // ── Gulf Coast ──
+  "Sabine Pass": [29.73, -93.87], "Calcasieu Pass LNG Terminal": [29.78, -93.34],
+  "Plaquemines": [29.51, -89.80], "Empire": [29.39, -89.60],
+  "Port Aransas": [27.83, -97.06], "Port Manatee": [27.64, -82.56],
+  // ── Florida ──
+  "Palm Beach": [26.77, -80.04], "Key West": [24.55, -81.79],
+  "Fernandina": [30.67, -81.46],
+  // ── East Coast ──
+  "Morehead City": [34.72, -76.71], "Albany": [42.65, -73.75],
+  "Bridgeport": [41.17, -73.18], "New Haven": [41.30, -72.93],
+  "Salem": [42.52, -70.89], "Searsport": [44.46, -68.93],
+  "Fall River": [41.70, -71.16], "New Bedford": [41.63, -70.92],
+  "Davisville Depot": [41.61, -71.41], "Manchester": [42.58, -70.77],
+  "Portmouth": [43.07, -70.76],
+  "Delaware": [39.16, -75.52], "Chester": [39.85, -75.36],
+  "Fairless Hills": [40.18, -74.84],
+  // ── Great Lakes ──
+  "Burns Harbor": [41.64, -87.16], "Buffington": [41.63, -87.39],
+  "Indiana Harbor": [41.66, -87.45], "Calumet Harbor": [41.73, -87.53],
+  "Conneaut": [41.97, -80.55], "Fairport": [41.76, -81.28],
+  "Sandusky": [41.45, -82.71], "Monroe": [41.92, -83.39],
+  "Bay City": [43.59, -83.89], "Grand Haven": [43.06, -86.23],
+  "Manitowoc": [44.09, -87.66], "Menominee": [45.10, -87.61],
+  "Two Harbors": [47.02, -91.67], "Presque Isle": [42.10, -80.10],
+  // ── Misc ──
+  "Sydney": [46.13, -60.18], "Swanport": [30.27, -88.55],
+  "United States - Offshore Oil Terminal 1": [28.88, -90.03],
 };
 
 /* ── Destination → US port fuzzy matching ────────────────── */
@@ -108,12 +145,46 @@ Object.assign(_PORT_KEYWORDS, {
   "ussav": "Savannah", "uschs": "Charleston",
   "usjax": "Jacksonville", "usmia": "Miami",
   "uspef": "Port Everglades", "usccv": "Canaveral Harbor",
+  "uspcv": "Canaveral Harbor", "uscpv": "Canaveral Harbor",
+  "pcv": "Canaveral Harbor", "cpv": "Canaveral Harbor",
+  "port canaveral": "Canaveral Harbor", "canaveral": "Canaveral Harbor",
   "usilm": "Wilmington, NC", "usbqk": "Brunswick",
   "usbos": "Boston", "uspvd": "Providence",
   "uspwm": "Portland, ME", "usmrh": "Marcus Hook",
   "uschi": "Chicago", "usdet": "Detroit",
   "uscle": "Cleveland", "ustol": "Toledo",
   "usdlh": "Duluth", "usmke": "Milwaukee",
+  // Norfolk area (naval bases, suburbs)
+  "orf": "Norfolk", "usorf": "Norfolk",
+  "little creek": "Norfolk", "littlecreek": "Norfolk",
+  "jeblc": "Norfolk", "hampton": "Norfolk", "hampton va": "Norfolk",
+  // Greater Houston / Texas
+  "usbpt": "Beaumont", "usnss": "Beaumont",
+  "usgls": "Galveston",
+  // Florida East Coast
+  "fort lauderdale": "Port Everglades", "ft lauderdale": "Port Everglades",
+  "ftlauderdale": "Port Everglades", "fll": "Port Everglades",
+  // SF Bay
+  "ussfo": "San Francisco", "usoak": "Oakland",
+  "usrch": "Oakland", "richmond ca": "Oakland",
+  // LA / Long Beach
+  "uslgb": "Los Angeles-Long Beach", "uslax": "Los Angeles-Long Beach",
+  // Tampa
+  "tpa": "Tampa", "tampa fl": "Tampa", "tampa bay": "Tampa",
+  // Specialty / niche fixes
+  "uspsm": "Portmouth", "portsmouth nh": "Portmouth", "portsmouthnh": "Portmouth",
+  "ussut": "Wilmington, NC", "sunny point": "Wilmington, NC",
+  "us pea": "Barbor's Point", "uspea": "Barbor's Point",
+  // Delaware (port = Delaware City refinery area, not the state)
+  "del city": "Delaware", "delcity": "Delaware",
+  "us delaware city": "Delaware", "usdelawarecity": "Delaware",
+  "delaware city": "Delaware", "delawarecity": "Delaware",
+  "us del": "Delaware", "usdel": "Delaware",
+  // Disambiguate Wilmington (default to DE since DE has more shipping)
+  "wilmington de": "Wilmington, DE", "wilmingtonde": "Wilmington, DE",
+  "wilmington delaware": "Wilmington, DE", "uswil": "Wilmington, DE",
+  "wilmington nc": "Wilmington, NC", "wilmingtonnc": "Wilmington, NC",
+  "wilmington north carolina": "Wilmington, NC",
 });
 
 function resolveUSPort(destination) {
@@ -121,9 +192,12 @@ function resolveUSPort(destination) {
   const dest = destination.toUpperCase().trim();
   const isLikelyUS = /\bUS\b|USA|UNITED STATES/.test(dest);
   const destLower = destination.toLowerCase().trim();
+  // Normalized variant: strip all non-alphanumeric so "US HOU" → "ushou"
+  const destNorm = destLower.replace(/[^a-z0-9]/g, "");
   if (_PORT_KEYWORDS[destLower]) return _PORT_KEYWORDS[destLower];
+  if (_PORT_KEYWORDS[destNorm]) return _PORT_KEYWORDS[destNorm];
   for (const [keyword, portName] of Object.entries(_PORT_KEYWORDS)) {
-    if (destLower.includes(keyword)) return portName;
+    if (destLower.includes(keyword) || destNorm.includes(keyword)) return portName;
   }
   if (isLikelyUS) return "__US_UNKNOWN__";
   return null;
@@ -907,8 +981,9 @@ function PortLayer({ portMarkers, showPorts, onPortClick }) {
             <div style={{ fontFamily: T.sans, fontSize: 11, lineHeight: 1.5 }}>
               <strong>{p.name}</strong><br />
               Congestion: <span style={{ color: congestionColor(p.score), fontWeight: 700 }}>{p.status}</span> ({p.score.toFixed(0)})<br />
-              At port (anchored/moored): <strong>{p.atPort || 0}</strong>
-              <br />En route: <strong>{p.enRoute || 0}</strong>
+              Moored: <strong>{p.moored || 0}</strong>
+              <br />At anchor: <strong>{p.anchored || 0}</strong>
+              <br />Incoming: <strong>{p.incoming || 0}</strong>
               {p.isUnverified && (
                 <><br /><span style={{ color: T.inkDim, fontStyle: "italic" }}>
                   Live AIS coverage: {p.coverage}
@@ -928,7 +1003,17 @@ function PortLayer({ portMarkers, showPorts, onPortClick }) {
           eventHandlers={{
             click: () => onPortClick && onPortClick(p),
           }}
-        />
+        >
+          <Tooltip direction="top" offset={[0, -8]} opacity={0.95}>
+            <div style={{ fontFamily: T.sans, fontSize: 11, lineHeight: 1.5 }}>
+              <strong>{p.name}</strong><br />
+              Congestion: <span style={{ color: congestionColor(p.score), fontWeight: 700 }}>{p.status}</span> ({p.score.toFixed(0)})<br />
+              Moored: <strong>{p.moored || 0}</strong>
+              <br />At anchor: <strong>{p.anchored || 0}</strong>
+              <br />Incoming: <strong>{p.incoming || 0}</strong>
+            </div>
+          </Tooltip>
+        </Marker>
       ))}
 
     </>
@@ -998,10 +1083,11 @@ export default function VesselMap() {
   }, []);
 
   // Filter to US-bound vessels only + split counts: at port vs en route
-  const { usVessels, portVesselCounts, portAtPort, portEnRoute } = useMemo(() => {
+  const { usVessels, portVesselCounts, portMoored, portAnchored, portIncoming } = useMemo(() => {
     const counts = {};
-    const atPort = {};
-    const enRoute = {};
+    const moored = {};
+    const anchored = {};
+    const incoming = {};
     const usOnly = [];
 
     for (const v of vessels) {
@@ -1016,17 +1102,18 @@ export default function VesselMap() {
         usOnly.push(v);
         if (resolvedPort && resolvedPort !== "__US_UNKNOWN__") {
           counts[resolvedPort] = (counts[resolvedPort] || 0) + 1;
-          const isAtPort = v.nav_status_label === "At Anchor" || v.nav_status_label === "Moored";
-          if (isAtPort) {
-            atPort[resolvedPort] = (atPort[resolvedPort] || 0) + 1;
+          if (v.nav_status_label === "Moored") {
+            moored[resolvedPort] = (moored[resolvedPort] || 0) + 1;
+          } else if (v.nav_status_label === "At Anchor") {
+            anchored[resolvedPort] = (anchored[resolvedPort] || 0) + 1;
           } else {
-            enRoute[resolvedPort] = (enRoute[resolvedPort] || 0) + 1;
+            incoming[resolvedPort] = (incoming[resolvedPort] || 0) + 1;
           }
         }
       }
     }
 
-    return { usVessels: usOnly, portVesselCounts: counts, portAtPort: atPort, portEnRoute: enRoute };
+    return { usVessels: usOnly, portVesselCounts: counts, portMoored: moored, portAnchored: anchored, portIncoming: incoming };
   }, [vessels]);
 
   // STRESS_TEST: uncomment to simulate 10K vessels
@@ -1070,8 +1157,9 @@ export default function VesselMap() {
     for (const [name, coords] of Object.entries(PORT_COORDS)) {
       const cong = congestionMap[name];
       const vesselCount = portVesselCounts[name] || 0;
-      const atPort = portAtPort[name] || 0;
-      const enRoute = portEnRoute[name] || 0;
+      const moored = portMoored[name] || 0;
+      const anchored = portAnchored[name] || 0;
+      const incoming = portIncoming[name] || 0;
       const portcalls = cong?.last_portcalls ?? 0;
       const score = cong?.current_score ?? 50;
       const status = cong?.status || "MEDIUM";
@@ -1083,10 +1171,12 @@ export default function VesselMap() {
       // missing or empty: fail-open so a backend hiccup doesn't ghost the map).
       const coverage = coverageMap[name] || "covered";
       const isUnverified = coverage === "dark" || coverage === "sparse" || coverage === "unavailable";
-      markers.push({ name, coords, vesselCount, atPort, enRoute, portcalls, score, status, baseRadius, isMajor, coverage, isUnverified });
+      // Show only ports with reliable AIS coverage (filter out inland/dark ports)
+      if (isUnverified) continue;
+      markers.push({ name, coords, vesselCount, moored, anchored, incoming, portcalls, score, status, baseRadius, isMajor, coverage, isUnverified });
     }
     return markers;
-  }, [congestionPorts, portVesselCounts, portAtPort, portEnRoute, coverageMap]);
+  }, [congestionPorts, portVesselCounts, portMoored, portAnchored, portIncoming, coverageMap]);
 
   // Fly-to handler for rerouting alternatives and port clicks
   const handleFlyTo = useCallback((coords, portName) => {

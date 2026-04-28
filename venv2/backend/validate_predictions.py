@@ -219,16 +219,88 @@ def main():
         p_cov = pdf["within_95_interval"].mean() * 100
         print(f"  {port:<25} {p_mae:>6.1f} {p_mape:>6.1f}% {p_tier:>6.1f}% {p_cov:>9.1f}%")
 
-    # Congestion score error
+    # Congestion score errors
     cong_mae = results_df["congestion_error"].abs().mean()
+    cong_rmse = float(np.sqrt((results_df["congestion_error"] ** 2).mean()))
     print(f"\n── Congestion Score Error ──")
-    print(f"  Mean Absolute Error: {cong_mae:.1f} points (out of 100)")
+    print(f"  MAE  (Mean Absolute Error):     {cong_mae:.1f} points (out of 100)")
+    print(f"  RMSE (Root Mean Squared Error): {cong_rmse:.1f} points")
+
+    # ── Additional regression metric: SMAPE ──
+    pred_pc = results_df["predicted_portcalls"].values
+    act_pc  = results_df["actual_portcalls"].values
+    denom = (np.abs(pred_pc) + np.abs(act_pc)) / 2
+    smape = float(np.mean(np.where(denom == 0, 0, np.abs(pred_pc - act_pc) / np.where(denom == 0, 1, denom))) * 100)
+
+    pc_rmse = float(np.sqrt(((pred_pc - act_pc) ** 2).mean()))
+    print(f"\n── Additional Portcall Metrics ──")
+    print(f"  RMSE:                            {pc_rmse:.2f} portcalls")
+    print(f"  SMAPE (Symmetric MAPE):          {smape:.1f}%  (handles zero actuals)")
+
+    # ── Per-tier Precision / Recall / F1 ──
+    print(f"\n── Per-Tier Precision / Recall / F1 ──")
+    print(f"  {'Tier':<8} {'Precision':>10} {'Recall':>8} {'F1':>6} {'Support':>8}")
+    for tier in tiers:
+        tp = len(results_df[(results_df["predicted_tier"] == tier) & (results_df["actual_tier"] == tier)])
+        fp = len(results_df[(results_df["predicted_tier"] == tier) & (results_df["actual_tier"] != tier)])
+        fn = len(results_df[(results_df["predicted_tier"] != tier) & (results_df["actual_tier"] == tier)])
+        support = tp + fn
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        print(f"  {tier:<8} {precision:>9.2%} {recall:>7.2%} {f1:>5.2f} {support:>8}")
+
+    # ── Cohen's Kappa (accuracy adjusted for class imbalance) ──
+    n = len(results_df)
+    po = results_df["tier_correct"].mean()
+    pe = sum(
+        (len(results_df[results_df["predicted_tier"] == t]) / n) *
+        (len(results_df[results_df["actual_tier"] == t]) / n)
+        for t in tiers
+    )
+    kappa = (po - pe) / (1 - pe) if (1 - pe) > 0 else 0.0
+    print(f"\n── Cohen's Kappa ──")
+    print(f"  κ = {kappa:.3f}  (0=chance, 1=perfect; >0.6 substantial agreement)")
+
+    # ── Directional accuracy (per port) ──
+    # Did we correctly predict whether congestion would rise or fall vs the previous day's actual?
+    dir_correct, dir_total = 0, 0
+    for port in results_df["port"].unique():
+        pdf = results_df[results_df["port"] == port].sort_values("date").reset_index(drop=True)
+        for i in range(1, len(pdf)):
+            prev_actual = pdf.loc[i-1, "actual_congestion"]
+            pred_dir   = np.sign(pdf.loc[i, "predicted_congestion"] - prev_actual)
+            actual_dir = np.sign(pdf.loc[i, "actual_congestion"] - prev_actual)
+            if pred_dir == actual_dir:
+                dir_correct += 1
+            dir_total += 1
+    dir_acc = (dir_correct / dir_total * 100) if dir_total > 0 else 0.0
+    print(f"\n── Directional Accuracy (rise/fall prediction) ──")
+    print(f"  {dir_acc:.1f}%  ({dir_correct}/{dir_total} correct direction predictions)")
+
+    # ── Skill Score vs Naive Baseline (persistence: tomorrow = today) ──
+    # If naive forecast = previous day's actual, what would its MAE be?
+    naive_errors = []
+    for port in results_df["port"].unique():
+        pdf = results_df[results_df["port"] == port].sort_values("date").reset_index(drop=True)
+        for i in range(1, len(pdf)):
+            naive_errors.append(abs(pdf.loc[i, "actual_portcalls"] - pdf.loc[i-1, "actual_portcalls"]))
+    if naive_errors:
+        naive_mae = float(np.mean(naive_errors))
+        skill = (1 - mae / naive_mae) * 100 if naive_mae > 0 else 0.0
+        print(f"\n── Skill Score vs Naive Baseline (persistence) ──")
+        print(f"  Naive MAE (tomorrow=today):      {naive_mae:.2f} portcalls")
+        print(f"  Model MAE:                        {mae:.2f} portcalls")
+        print(f"  Skill score:                      {skill:+.1f}%  (>0 means model beats naive)")
 
     print(f"\n✓ Full results saved to: {outfile}")
     print(f"\nInterpretation:")
     print(f"  - MAPE < 20%: Good forecast")
     print(f"  - MAPE < 10%: Excellent forecast")
     print(f"  - Tier accuracy > 70%: Congestion scoring is reliable")
+    print(f"  - Cohen's κ > 0.6: Substantial agreement (better than chance)")
+    print(f"  - Directional accuracy > 60%: Trend predictions are reliable")
+    print(f"  - Skill score > 0: Model beats naive 'tomorrow = today' baseline")
     print(f"  - 95% coverage ≈ 95%: Prediction intervals are well calibrated")
 
 

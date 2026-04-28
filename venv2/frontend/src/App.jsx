@@ -15,7 +15,6 @@ import { usePortList, useOverview, useForecast, useTopPorts, useTopLoadedPorts, 
 import { useTheme } from "./hooks/useTheme";
 import VesselMap from "./VesselMap";
 import Briefing from "./components/advisor/Briefing";
-import ScenarioSimulator from "./components/advisor/ScenarioSimulator";
 import PortComparison from "./components/advisor/PortComparison";
 import NearbyPortOutlook from "./components/advisor/NearbyPortOutlook";
 
@@ -1229,9 +1228,6 @@ function AiAdvisor({ port, onSelectPort }) {
               ))}
             </div>
 
-            {/* Scenario Simulator (3B) */}
-            <ScenarioSimulator T={T} onFollowUp={(q) => send(q)} />
-
             {/* Suggested questions for active category */}
             <div style={{ display:"flex", flexDirection:"column", gap:6, width:"100%", maxWidth:520 }}>
               <div style={{ fontSize:10, color:T.inkDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:2 }}>
@@ -1668,7 +1664,6 @@ export default function App() {
   const { data: overview, loading: ovLoad }   = useOverview(port);
   const { data: fcstData, loading: fcLoad }   = useForecast(port, model);
   const { data: topData }                     = useTopPorts(20);                // asc — feeds AlternativePortsTable
-  const { data: anomalousData }                = useTopPorts(20, "desc");        // desc — feeds Most Anomalous sidebar
   const { data: loadedData }                   = useTopLoadedPorts(10);
   const { data: compData }                    = useModelComp();
 
@@ -1742,28 +1737,6 @@ export default function App() {
                     </button>
                   ))}
                 </div>
-              </div>
-
-              {/* Most anomalous ports — z-score ranking */}
-              <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
-                display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
-                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
-                    <Label>Most Anomalous Ports</Label>
-                    <span
-                      title={anomalousData?.description || "Ports ranked by per-port z-score deviation from their own historical baseline. Highlights ports having unusual days, NOT necessarily the most loaded ports."}
-                      style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
-                    >
-                      <Info size={10} />
-                    </span>
-                  </div>
-                  <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
-                </div>
-                <SidebarPortsList
-                  topPorts={anomalousData?.ports}
-                  selectedPort={port}
-                  onSelect={setPort}
-                />
               </div>
 
               {/* Most loaded ports — absolute current portcalls */}
