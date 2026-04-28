@@ -9,35 +9,47 @@ import {
   Anchor, TrendingUp, TrendingDown, Minus,
   ChevronDown, AlertTriangle, CheckCircle, Clock, Ship,
   Calendar, Navigation, Zap, Info, MessageSquare, Send, RotateCcw,
+  Sun, Moon,
 } from "lucide-react";
-import { usePortList, useOverview, useForecast, useTopPorts, useModelComp, useChokepoints, useChokepointDetail, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
+import { usePortList, useOverview, useForecast, useTopPorts, useTopLoadedPorts, useModelComp, usePortChokepoints, useWeather, useRiskAssessment, postChat, postFollowups } from "./hooks/useApi";
+import { useTheme } from "./hooks/useTheme";
 import VesselMap from "./VesselMap";
+import Briefing from "./components/advisor/Briefing";
+import ScenarioSimulator from "./components/advisor/ScenarioSimulator";
+import PortComparison from "./components/advisor/PortComparison";
+import NearbyPortOutlook from "./components/advisor/NearbyPortOutlook";
 
 /* ─────────────────────────────────────────────────────────
    DESIGN TOKENS
 ───────────────────────────────────────────────────────── */
 const T = {
-  navy:    "#F5F7FA",
-  navy2:   "#EDF0F5",
-  navy3:   "#E4E8EF",
-  slate:   "#DDE2EB",
-  slateL:  "#D4DAE5",
-  border:  "#C8D0DE",
-  borderL: "#B8C2D4",
-  teal:    "#0A9B80",
-  tealD:   "#078A72",
-  tealBg:  "rgba(10,155,128,0.08)",
-  amber:   "#D97706",
-  amberBg: "rgba(217,119,6,0.1)",
-  red:     "#DC2626",
-  redBg:   "rgba(220,38,38,0.08)",
-  green:   "#059669",
-  greenBg: "rgba(5,150,105,0.08)",
-  blue:    "#2563EB",
-  blueBg:  "rgba(37,99,235,0.08)",
-  ink:     "#1A202C",
-  inkMid:  "#4A5568",
-  inkDim:  "#718096",
+  navy:    "var(--bg-navy)",
+  navy2:   "var(--bg-navy2)",
+  navy3:   "var(--bg-navy3)",
+  slate:   "var(--bg-slate)",
+  slateL:  "var(--bg-slateL)",
+  border:  "var(--border-color)",
+  borderL: "var(--border-colorL)",
+  borderSubtle: "var(--border-subtle)",
+  borderMedium: "var(--border-medium)",
+  teal:    "var(--accent-teal)",
+  tealD:   "var(--accent-tealD)",
+  tealBg:  "var(--teal-bg)",
+  tealSubtle: "var(--teal-subtle)",
+  tealFaint:  "var(--teal-faint)",
+  tealBorder: "var(--teal-border)",
+  amber:   "#F59E0B",
+  amberBg: "var(--amber-bg)",
+  red:     "#EF4444",
+  redBg:   "var(--red-bg)",
+  green:   "#10B981",
+  greenBg: "var(--green-bg)",
+  blue:    "#3B82F6",
+  blueBg:  "var(--blue-bg)",
+  ink:     "var(--text-ink)",
+  inkMid:  "var(--text-inkMid)",
+  inkDim:  "var(--text-inkDim)",
+  navy2Overlay: "var(--navy2-overlay)",
   mono:    "'JetBrains Mono', monospace",
   sans:    "'Syne', sans-serif",
 };
@@ -102,17 +114,24 @@ function Spinner() {
   );
 }
 
-function RiskPill({ level }) {
+function RiskPill({ level, unverified = false }) {
   const cfg = RISK_CFG[level] || RISK_CFG.LOW;
   const Icon = cfg.icon;
+  // Phase 6A.2 — unverified variant: outlined-dashed, no fill, hue preserved.
+  // Note: width-constrained header pill — caller suppresses the "· UNVERIFIED"
+  // suffix. Wider callers (forecast cards) append the suffix themselves.
   return (
     <span style={{
       display:"inline-flex", alignItems:"center", gap:5,
       padding:"3px 10px", borderRadius:99,
-      background: cfg.bg, color: cfg.color,
+      background: unverified ? "transparent" : cfg.bg,
+      color: cfg.color,
       fontSize:11, fontWeight:700, letterSpacing:"0.04em",
-      border:`1px solid ${cfg.color}33`,
+      border: unverified
+        ? `1px dashed ${cfg.color}88`
+        : `1px solid ${cfg.color}33`,
       textTransform:"uppercase",
+      opacity: unverified ? 0.85 : 1,
     }}>
       <Icon size={11} />
       {cfg.label}
@@ -245,12 +264,50 @@ function CongestionHero({ kpi }) {
   const cfg   = RISK_CFG[level] || RISK_CFG.LOW;
   const lag   = kpi?.data_lag_days ?? 0;
 
+  // Phase 6A — staleness reconciliation
+  const tierAdjusted    = kpi?.tier_adjusted === true;
+  const portwatchTier   = kpi?.portwatch_tier;
+  const adjustReason    = kpi?.tier_adjustment_reason;
+  const liveUnavailable = kpi?.live_data_available === false;
+  // Phase 6A.1 — spatial coverage classification
+  const liveCoverage    = kpi?.live_coverage; // "covered" | "sparse" | "dark" | "unavailable" | null
+  // Phase 6A.2 — visual unverified state when live coverage cannot validate
+  // the displayed tier. We dash the gauge fill and ghost the score number.
+  const isUnverified =
+    liveCoverage === "dark" ||
+    liveCoverage === "sparse" ||
+    liveCoverage === "unavailable";
+
   // Semicircle gauge
   const R = 54, cx = 64, cy = 62;
   const pLen  = Math.PI * R;
   const fill  = (Math.min(100, Math.max(0, score)) / 100) * pLen;
 
   return (
+    <div style={{ display:"flex", flexDirection:"column", gap:"0.5rem" }}>
+      {tierAdjusted && (
+        <div style={{
+          display:"flex", alignItems:"flex-start", gap:"0.6rem",
+          padding:"0.6rem 0.9rem",
+          background: T.amberBg,
+          border: `1px solid ${T.amber}55`,
+          borderRadius: 8,
+          fontSize: 12, color: T.ink, lineHeight: 1.4,
+        }}>
+          <AlertTriangle size={14} color={T.amber} style={{ flexShrink:0, marginTop:1 }} />
+          <div>
+            <div style={{ fontWeight:700, color: T.amber, marginBottom:2 }}>
+              Tier adjusted using live AIS
+            </div>
+            <div style={{ color: T.inkMid }}>{adjustReason}</div>
+            {portwatchTier && portwatchTier !== level && (
+              <div style={{ fontSize:11, color: T.inkDim, marginTop:3 }}>
+                PortWatch tier (historical): <strong style={{ color: T.inkMid }}>{portwatchTier}</strong>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     <Card style={{ padding:"1.25rem 1.5rem", display:"flex", alignItems:"center", gap:"1.5rem" }}>
       {/* Gauge */}
       <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
@@ -258,17 +315,18 @@ function CongestionHero({ kpi }) {
           {/* track segments: LOW zone */}
           <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
             fill="none" stroke={T.border} strokeWidth={10} strokeLinecap="butt" />
-          {/* colored fill */}
+          {/* colored fill — dashed + ghosted when live AIS can't verify the tier */}
           <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
             fill="none" stroke={cfg.color} strokeWidth={10} strokeLinecap="butt"
-            strokeDasharray={`${fill} ${pLen}`}
-            style={{ transition:"stroke-dasharray 0.7s ease, stroke 0.4s ease" }} />
+            strokeDasharray={isUnverified ? "5 4" : `${fill} ${pLen}`}
+            opacity={isUnverified ? 0.55 : 1}
+            style={{ transition:"stroke-dasharray 0.7s ease, stroke 0.4s ease, opacity 0.3s ease" }} />
           <text x={cx} y={cy-4} textAnchor="middle" fontSize={22} fontWeight={800}
-            fontFamily={T.sans} fill={T.ink}>{Math.round(score)}</text>
+            fontFamily={T.sans} fill={isUnverified ? T.inkMid : T.ink}>{Math.round(score)}</text>
           <text x={cx} y={cy+12} textAnchor="middle" fontSize={9} fontWeight={600}
             fontFamily={T.sans} fill={T.inkMid} letterSpacing="0.1em">CONGESTION</text>
         </svg>
-        <RiskPill level={level} />
+        <RiskPill level={level} unverified={isUnverified} />
       </div>
 
       {/* Info column */}
@@ -314,30 +372,73 @@ function CongestionHero({ kpi }) {
               {kpi?.last_portcalls != null ? Math.round(kpi.last_portcalls) : "—"}
             </div>
           </div>
+          <div>
+            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Data freshness</div>
+            <div style={{ fontSize:13, fontWeight:600,
+              color: lag === 0 ? T.green : lag > 7 ? T.red : lag > 3 ? T.amber : T.inkMid,
+              display:"flex", alignItems:"center", gap:4 }}>
+              <Clock size={12} />
+              {lag === 0 ? "Up to date" : `${lag}d behind real-time`}
+            </div>
+            {liveUnavailable && lag > 7 && (
+              <div style={{ fontSize:10, color: T.inkDim, marginTop:3, fontStyle:"italic" }}>
+                Live AIS unavailable — tier reflects PortWatch only
+              </div>
+            )}
+            {liveCoverage === "sparse" && (
+              <div
+                title="Live AIS shows few vessels near this port. The displayed tier is based on PortWatch arrivals data only."
+                style={{ fontSize:10, color: T.inkMid, marginTop:3, padding:"2px 6px",
+                  background: T.navy3, border: `1px solid ${T.border}`, borderRadius: 4,
+                  display:"inline-block", cursor:"help" }}>
+                Limited live coverage
+              </div>
+            )}
+            {liveCoverage === "dark" && (
+              <div
+                title="No live AIS vessels detected near this port. Common for inland ports outside coastal AIS reception. Tier is based on PortWatch arrivals data only and has not been validated against live conditions."
+                style={{ fontSize:10, color: T.inkMid, marginTop:3, padding:"2px 6px",
+                  background: T.navy3, border: `1px solid ${T.border}`, borderRadius: 4,
+                  display:"inline-block", cursor:"help" }}>
+                Live coverage unavailable
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Card>
+    </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────────
    7-DAY CONGESTION OUTLOOK CARDS  (weather-app style)
 ───────────────────────────────────────────────────────── */
-function CongestionDayCard({ row, isHighest, isLowest, isFirst }) {
+function CongestionDayCard({ row, isHighest, isLowest, isFirst, isUnverified = false }) {
   const score  = row.congestion_score ?? 50;
   const level  = row.congestion_level || (score >= 67 ? "HIGH" : score >= 33 ? "MEDIUM" : "LOW");
   const clr    = congestionColor(score);
   const dateStr= row.ds || row.date || "";
 
+  // Phase 6A.2 — when live AIS coverage can't validate the tier, render the
+  // forecast card neutrally: no AVOID/BEST badge, dashed border + ring,
+  // outlined level pill, and a "· UNVERIFIED" suffix on the level label
+  // (this caller has horizontal room; the header pill does not).
+  const cardBg     = isUnverified ? T.navy3 : (isHighest ? T.redBg : isLowest ? T.greenBg : T.navy3);
+  const cardBorder = isUnverified
+    ? `1px dashed ${T.borderL}`
+    : `1px solid ${isHighest ? T.red+"44" : isLowest ? T.green+"44" : T.border}`;
+
   return (
     <div style={{
       flex:1, minWidth:0,
-      background: isHighest ? T.redBg : isLowest ? T.greenBg : T.navy3,
-      border: `1px solid ${isHighest ? T.red+"44" : isLowest ? T.green+"44" : T.border}`,
+      background: cardBg,
+      border: cardBorder,
       borderRadius:10, padding:"0.9rem 0.6rem",
       display:"flex", flexDirection:"column", alignItems:"center", gap:6,
       transition:"background 0.2s",
       position:"relative",
+      opacity: isUnverified ? 0.85 : 1,
     }}>
       {isFirst && (
         <div style={{
@@ -359,24 +460,28 @@ function CongestionDayCard({ row, isHighest, isLowest, isFirst }) {
       <svg width={52} height={52} viewBox="0 0 52 52">
         <circle cx={26} cy={26} r={20} fill="none" stroke={T.border} strokeWidth={4} />
         <circle cx={26} cy={26} r={20} fill="none" stroke={clr} strokeWidth={4}
-          strokeDasharray={`${(score / 100) * 125.6} 125.6`}
+          strokeDasharray={isUnverified ? "4 3" : `${(score / 100) * 125.6} 125.6`}
           strokeDashoffset={31.4}
           strokeLinecap="round"
-          style={{ transition:"stroke-dasharray 0.6s ease" }} />
+          opacity={isUnverified ? 0.55 : 1}
+          style={{ transition:"stroke-dasharray 0.6s ease, opacity 0.3s ease" }} />
         <text x={26} y={31} textAnchor="middle" fontSize={13} fontWeight={800}
-          fontFamily={T.sans} fill={T.ink}>{Math.round(score)}</text>
+          fontFamily={T.sans} fill={isUnverified ? T.inkMid : T.ink}>{Math.round(score)}</text>
       </svg>
 
       <div style={{
         fontSize:9, fontWeight:700, letterSpacing:"0.06em",
         color: clr, textTransform:"uppercase",
-        padding:"2px 6px", borderRadius:4, background:`${clr}18`,
+        padding:"2px 6px", borderRadius:4,
+        background: isUnverified ? "transparent" : `${clr}18`,
+        border: isUnverified ? `1px dashed ${clr}88` : "none",
+        whiteSpace:"nowrap",
       }}>
-        {level}
+        {level}{isUnverified ? " · UNVERIFIED" : ""}
       </div>
 
-      {isHighest && <div style={{ fontSize:8, color: T.red, fontWeight:700, letterSpacing:"0.05em" }}>⚠ AVOID</div>}
-      {isLowest  && <div style={{ fontSize:8, color: T.green, fontWeight:700, letterSpacing:"0.05em" }}>✓ BEST</div>}
+      {!isUnverified && isHighest && <div style={{ fontSize:8, color: T.red, fontWeight:700, letterSpacing:"0.05em" }}>⚠ AVOID</div>}
+      {!isUnverified && isLowest  && <div style={{ fontSize:8, color: T.green, fontWeight:700, letterSpacing:"0.05em" }}>✓ BEST</div>}
     </div>
   );
 }
@@ -674,6 +779,51 @@ function SidebarPortsList({ topPorts, selectedPort, onSelect }) {
 }
 
 /* ─────────────────────────────────────────────────────────
+   SIDEBAR LOADED PORTS  (sorted by current portcalls desc)
+───────────────────────────────────────────────────────── */
+function SidebarLoadedPortsList({ loadedPorts, selectedPort, onSelect }) {
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:0, overflowY:"auto", flex:1 }}>
+      {(loadedPorts || []).map((p, i) => {
+        const isActive = p.portname === selectedPort;
+        const color = p.congestion_level === "HIGH" ? T.red : p.congestion_level === "MEDIUM" ? T.amber : T.green;
+        return (
+          <div
+            key={p.portname}
+            onClick={() => onSelect(p.portname)}
+            style={{
+              display:"flex", alignItems:"center", gap:8,
+              padding:"0.55rem 0.75rem",
+              background: isActive ? T.tealBg : "transparent",
+              borderLeft: `2px solid ${isActive ? T.teal : "transparent"}`,
+              cursor:"pointer", transition:"all 0.15s",
+            }}
+            onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = T.navy3; }}
+            onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+          >
+            <span style={{ fontSize:9, fontFamily:T.mono, color:T.inkDim, width:14, textAlign:"right" }}>
+              {i + 1}
+            </span>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:11, fontWeight:600, color: isActive ? T.teal : T.ink,
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {p.portname}
+              </div>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+              <span style={{ fontSize:10, fontFamily:T.mono, fontWeight:700, color: T.ink }}>
+                {Math.round(p.current_portcalls ?? 0)}
+              </span>
+              <span style={{ width:5, height:5, borderRadius:"50%", background:color, flexShrink:0 }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
    CHOKEPOINT COMPONENTS
 ───────────────────────────────────────────────────────── */
 const DISRUPTION_CFG = {
@@ -681,300 +831,6 @@ const DISRUPTION_CFG = {
   MEDIUM: { color: T.amber, bg: T.amberBg, label: "Watch",        icon: Clock },
   LOW:    { color: T.green, bg: T.greenBg, label: "Normal Flow",  icon: CheckCircle },
 };
-
-function DisruptionPill({ level }) {
-  const cfg = DISRUPTION_CFG[level] || DISRUPTION_CFG.LOW;
-  const Icon = cfg.icon;
-  return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding:"3px 10px", borderRadius:99,
-      background: cfg.bg, color: cfg.color,
-      fontSize:11, fontWeight:700, letterSpacing:"0.04em",
-      border:`1px solid ${cfg.color}33`, textTransform:"uppercase",
-    }}>
-      <Icon size={11} />{cfg.label}
-    </span>
-  );
-}
-
-function ChokepointCard({ chk, isSelected, onClick }) {
-  const cfg   = DISRUPTION_CFG[chk.disruption_level] || DISRUPTION_CFG.LOW;
-  const score = chk.disruption_score ?? 0;
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        background: isSelected ? T.tealBg : T.navy3,
-        border: `1px solid ${isSelected ? T.teal : cfg.color + "44"}`,
-        borderRadius:10, padding:"0.75rem 0.9rem",
-        cursor:"pointer", transition:"all 0.15s",
-        display:"flex", flexDirection:"column", gap:6,
-      }}
-      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.borderColor = T.borderL; }}
-      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.borderColor = cfg.color + "44"; }}
-    >
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
-        <div style={{ fontSize:11, fontWeight:700, color: isSelected ? T.teal : T.ink,
-          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1 }}>
-          {chk.portname}
-        </div>
-        <span style={{ fontSize:9, fontWeight:700, letterSpacing:"0.05em",
-          padding:"2px 6px", borderRadius:4,
-          background:`${cfg.color}18`, color:cfg.color, textTransform:"uppercase", flexShrink:0 }}>
-          {chk.disruption_level}
-        </span>
-      </div>
-
-      {/* Score bar */}
-      <div style={{ height:3, background:T.border, borderRadius:2, overflow:"hidden" }}>
-        <div style={{ width:`${score}%`, height:"100%", background:cfg.color,
-          borderRadius:2, transition:"width 0.6s ease" }} />
-      </div>
-
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <div style={{ fontSize:10, color:T.inkDim }}>
-          {chk.n_total ?? 0} ships/day
-        </div>
-        <div style={{ fontSize:10, fontFamily:T.mono, fontWeight:700, color:cfg.color }}>
-          {Math.round(score)}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ChokepointHistoryChart({ history }) {
-  if (!history?.length) return null;
-  const data = history.map(r => ({
-    date: r.date?.slice(5),
-    score: r.disruption_score ?? null,
-    smooth: r.n_total_7d ?? null,
-  }));
-  return (
-    <ResponsiveContainer width="100%" height={160}>
-      <ComposedChart data={data} margin={{ top:8, right:8, bottom:0, left:0 }}>
-        <defs>
-          <linearGradient id="chkGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"  stopColor={T.amber} stopOpacity={0.3} />
-            <stop offset="100%" stopColor={T.amber} stopOpacity={0.02} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="2 4" stroke={T.border} vertical={false} />
-        <XAxis dataKey="date" tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false}
-          interval={Math.floor(data.length / 6)} />
-        <YAxis domain={[0,100]} tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false} width={24} />
-        <Tooltip content={({ active, payload, label }) => {
-          if (!active || !payload?.length) return null;
-          return (
-            <div style={{ background:T.slate, border:`1px solid ${T.borderL}`, borderRadius:8, padding:"0.5rem 0.75rem", fontSize:11 }}>
-              <div style={{ color:T.inkMid, marginBottom:3 }}>{label}</div>
-              {payload.map((p, i) => p.value != null && (
-                <div key={i} style={{ color:p.color, fontWeight:600 }}>
-                  {p.name}: {typeof p.value === "number" ? Math.round(p.value) : p.value}
-                </div>
-              ))}
-            </div>
-          );
-        }} />
-        <ReferenceLine y={67} stroke={T.red}   strokeDasharray="3 3" strokeOpacity={0.5} />
-        <ReferenceLine y={33} stroke={T.amber} strokeDasharray="3 3" strokeOpacity={0.5} />
-        <Area type="monotone" dataKey="score" name="Disruption"
-          stroke={T.amber} strokeWidth={2} fill="url(#chkGrad)" dot={false} connectNulls />
-      </ComposedChart>
-    </ResponsiveContainer>
-  );
-}
-
-function ChokepointDetailPanel({ name }) {
-  const { data, loading } = useChokepointDetail(name);
-  if (loading) return <Spinner />;
-  if (!data) return null;
-
-  const { kpi, history, vessel_mix } = data;
-  const cfg = DISRUPTION_CFG[kpi?.disruption_level] || DISRUPTION_CFG.LOW;
-  const score = kpi?.disruption_score ?? 0;
-  const R = 54, cx = 64, cy = 62;
-  const pLen = Math.PI * R;
-  const fill = (Math.min(100, Math.max(0, score)) / 100) * pLen;
-
-  const VESSEL_TRANSIT_CFG = [
-    { key:"n_container",     label:"Container", color:"#3B82F6" },
-    { key:"n_tanker",        label:"Tanker",    color:"#F59E0B" },
-    { key:"n_dry_bulk",      label:"Dry Bulk",  color:"#10B981" },
-    { key:"n_general_cargo", label:"General",   color:"#8B5CF6" },
-    { key:"n_roro",          label:"RoRo",      color:"#EC4899" },
-  ];
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
-
-      {/* Hero */}
-      <Card style={{ padding:"1.25rem 1.5rem", display:"flex", alignItems:"center", gap:"1.5rem" }}>
-        <div style={{ flexShrink:0, display:"flex", flexDirection:"column", alignItems:"center", gap:4 }}>
-          <svg width={128} height={74} viewBox="0 0 128 74">
-            <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
-              fill="none" stroke={T.border} strokeWidth={10} strokeLinecap="butt" />
-            <path d={`M ${cx-R},${cy} A ${R},${R} 0 0 1 ${cx+R},${cy}`}
-              fill="none" stroke={cfg.color} strokeWidth={10} strokeLinecap="butt"
-              strokeDasharray={`${fill} ${pLen}`}
-              style={{ transition:"stroke-dasharray 0.7s ease" }} />
-            <text x={cx} y={cy-4} textAnchor="middle" fontSize={22} fontWeight={800}
-              fontFamily={T.sans} fill={T.ink}>{Math.round(score)}</text>
-            <text x={cx} y={cy+12} textAnchor="middle" fontSize={9} fontWeight={600}
-              fontFamily={T.sans} fill={T.inkMid} letterSpacing="0.1em">DISRUPTION</text>
-          </svg>
-          <DisruptionPill level={kpi?.disruption_level} />
-        </div>
-
-        <div style={{ flex:1 }}>
-          <div style={{ fontSize:18, fontWeight:800, color:T.ink, marginBottom:4 }}>{name}</div>
-          <div style={{ fontSize:12, color:T.inkMid, marginBottom:12 }}>
-            as of {kpi?.last_date || "—"}
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0.6rem 1.2rem" }}>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>vs 90-day normal</div>
-              <div style={{ fontSize:16, fontWeight:700, color:(kpi?.pct_vs_normal ?? 0) > 0 ? T.red : T.green }}>
-                {kpi?.pct_vs_normal != null ? `${kpi.pct_vs_normal > 0 ? "+" : ""}${kpi.pct_vs_normal.toFixed(1)}%` : "—"}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Trend</div>
-              <div style={{ fontSize:13, fontWeight:700, display:"flex", alignItems:"center", gap:4,
-                color: kpi?.trend === "rising" ? T.red : kpi?.trend === "falling" ? T.green : T.amber }}>
-                {kpi?.trend === "rising"  ? <TrendingUp size={14} /> :
-                 kpi?.trend === "falling" ? <TrendingDown size={14} /> : <Minus size={14} />}
-                {kpi?.trend || "—"}
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Ships today</div>
-              <div style={{ fontSize:16, fontWeight:700, color:T.ink }}>{kpi?.n_total ?? "—"}</div>
-            </div>
-            <div>
-              <div style={{ fontSize:10, color:T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Avg daily</div>
-              <div style={{ fontSize:16, fontWeight:700, color:T.ink }}>
-                {kpi?.avg_daily_transits != null ? kpi.avg_daily_transits.toFixed(1) : "—"}
-              </div>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* 90-day history + vessel mix */}
-      <div style={{ display:"grid", gridTemplateColumns:"1.6fr 1fr", gap:"1rem" }}>
-        <Card style={{ padding:"1rem 1.1rem" }}>
-          <Label style={{ marginBottom:10 }}>90-Day Disruption History</Label>
-          <ChokepointHistoryChart history={history} />
-        </Card>
-
-        <Card style={{ padding:"1rem 1.1rem" }}>
-          <Label style={{ marginBottom:10 }}>Transit Mix (6 months)</Label>
-          <ResponsiveContainer width="100%" height={120}>
-            <BarChart data={(vessel_mix || []).slice(-6)} margin={{ top:4, right:4, bottom:0, left:0 }}>
-              <CartesianGrid strokeDasharray="2 4" stroke={T.border} vertical={false} />
-              <XAxis dataKey="month" tickFormatter={d => d?.slice(5,7)+"/"+d?.slice(2,4)}
-                tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false} />
-              <YAxis tick={{ fill:T.inkDim, fontSize:9 }} tickLine={false} axisLine={false} width={24} />
-              <Tooltip content={({ active, payload, label }) => {
-                if (!active || !payload?.length) return null;
-                return (
-                  <div style={{ background:T.slate, border:`1px solid ${T.borderL}`, borderRadius:8, padding:"0.5rem 0.75rem", fontSize:11 }}>
-                    <div style={{ color:T.inkMid, marginBottom:3 }}>{label}</div>
-                    {payload.map((p, i) => (
-                      <div key={i} style={{ color:p.color, fontWeight:600 }}>
-                        {p.name}: {typeof p.value === "number" ? p.value.toFixed(0) : p.value}
-                      </div>
-                    ))}
-                  </div>
-                );
-              }} />
-              {VESSEL_TRANSIT_CFG.map(v => (
-                <Bar key={v.key} dataKey={v.key} stackId="a" fill={v.color} name={v.label} />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:"6px 10px", marginTop:8 }}>
-            {VESSEL_TRANSIT_CFG.map(v => (
-              <span key={v.key} style={{ display:"flex", alignItems:"center", gap:3, fontSize:9, color:T.inkDim }}>
-                <span style={{ width:6, height:6, borderRadius:2, background:v.color, display:"inline-block" }} />
-                {v.label}
-              </span>
-            ))}
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
-function ChokepointView() {
-  const { data, loading } = useChokepoints();
-  const [selected, setSelected] = useState(null);
-  const chokepoints = data?.chokepoints || [];
-
-  useEffect(() => {
-    if (chokepoints.length && !selected) {
-      const suez = chokepoints.find(c => c.portname === "Suez Canal");
-      setSelected(suez?.portname || chokepoints[0]?.portname);
-    }
-  }, [chokepoints, selected]);
-
-  if (loading) return <Spinner />;
-
-  const high   = chokepoints.filter(c => c.disruption_level === "HIGH").length;
-  const medium = chokepoints.filter(c => c.disruption_level === "MEDIUM").length;
-
-  return (
-    <div style={{ display:"flex", height:"100%", overflow:"hidden" }}>
-
-      {/* Chokepoint list */}
-      <div style={{
-        width:220, flexShrink:0, borderRight:`1px solid ${T.border}`,
-        display:"flex", flexDirection:"column", overflow:"hidden",
-      }}>
-        {/* Summary bar */}
-        <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
-          <Label style={{ marginBottom:8 }}>Global Chokepoints</Label>
-          <div style={{ display:"flex", gap:8 }}>
-            <span style={{ fontSize:10, padding:"2px 7px", borderRadius:4,
-              background:T.redBg, color:T.red, fontWeight:700 }}>
-              {high} HIGH
-            </span>
-            <span style={{ fontSize:10, padding:"2px 7px", borderRadius:4,
-              background:T.amberBg, color:T.amber, fontWeight:700 }}>
-              {medium} WATCH
-            </span>
-          </div>
-        </div>
-        <div style={{ overflowY:"auto", flex:1, padding:"0.5rem" }}>
-          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-            {chokepoints.map(c => (
-              <ChokepointCard
-                key={c.portname}
-                chk={c}
-                isSelected={selected === c.portname}
-                onClick={() => setSelected(c.portname)}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Detail */}
-      <div style={{ flex:1, overflowY:"auto", padding:"1rem 1.25rem" }}>
-        {selected
-          ? <ChokepointDetailPanel name={selected} />
-          : <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
-              height:"100%", color:T.inkDim, fontSize:14 }}>
-              Select a chokepoint
-            </div>
-        }
-      </div>
-    </div>
-  );
-}
 
 /* ─────────────────────────────────────────────────────────
    WEATHER COMPONENTS
@@ -1239,13 +1095,14 @@ const QUESTION_CATEGORIES = {
   ],
 };
 
-function AiAdvisor({ port }) {
+function AiAdvisor({ port, onSelectPort }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState(null);
   const [activeCategory, setActiveCategory] = useState("Diagnostic");
   const bottomRef               = useRef(null);
+  const { data: portListData }  = usePortList();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1307,7 +1164,7 @@ function AiAdvisor({ port }) {
         <div style={{ display:"flex", alignItems:"center", gap:8 }}>
           <div style={{
             width:28, height:28, borderRadius:7,
-            background:`${T.teal}22`, border:`1px solid ${T.teal}44`,
+            background:T.tealSubtle, border:`1px solid ${T.tealBorder}`,
             display:"flex", alignItems:"center", justifyContent:"center",
           }}>
             <MessageSquare size={13} color={T.teal} />
@@ -1337,7 +1194,7 @@ function AiAdvisor({ port }) {
           <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
             flex:1, gap:"1.5rem", paddingTop:"2rem" }}>
             <div style={{ textAlign:"center" }}>
-              <div style={{ fontSize:28, marginBottom:8 }}>🚢</div>
+              <div style={{ fontSize:28, marginBottom:8 }}>{"\u{1F6A2}"}</div>
               <div style={{ fontWeight:700, fontSize:15, color:T.ink, marginBottom:4 }}>
                 Maritime Intelligence Advisor
               </div>
@@ -1347,12 +1204,20 @@ function AiAdvisor({ port }) {
               </div>
             </div>
 
+            {/* Today's Briefing (3A) */}
+            <Briefing T={T} onAskMore={(q) => send(q)} />
+
+            {/* Nearby Port Outlook (6B Part 3) */}
+            {port && (
+              <NearbyPortOutlook T={T} port={port} onSelectPort={onSelectPort} />
+            )}
+
             {/* Category pills */}
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", justifyContent:"center" }}>
               {categories.map(cat => (
                 <button key={cat} onClick={() => setActiveCategory(cat)} style={{
                   padding:"0.3rem 0.75rem", borderRadius:20,
-                  background: activeCategory === cat ? `${T.teal}22` : "transparent",
+                  background: activeCategory === cat ? T.tealSubtle : "transparent",
                   border: `1px solid ${activeCategory === cat ? T.teal : T.border}`,
                   color: activeCategory === cat ? T.teal : T.inkMid,
                   fontSize:11, fontWeight: activeCategory === cat ? 700 : 500,
@@ -1363,6 +1228,9 @@ function AiAdvisor({ port }) {
                 </button>
               ))}
             </div>
+
+            {/* Scenario Simulator (3B) */}
+            <ScenarioSimulator T={T} onFollowUp={(q) => send(q)} />
 
             {/* Suggested questions for active category */}
             <div style={{ display:"flex", flexDirection:"column", gap:6, width:"100%", maxWidth:520 }}>
@@ -1386,6 +1254,11 @@ function AiAdvisor({ port }) {
                 );
               })}
             </div>
+
+            {/* Port Comparison (3C) */}
+            {portListData && portListData.ports && (
+              <PortComparison T={T} ports={portListData.ports} />
+            )}
           </div>
         )}
 
@@ -1398,7 +1271,7 @@ function AiAdvisor({ port }) {
               padding:"0.65rem 0.9rem",
               borderRadius: m.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
               background: m.role === "user" ? T.tealBg : T.navy3,
-              border: `1px solid ${m.role === "user" ? T.teal + "44" : T.border}`,
+              border: `1px solid ${m.role === "user" ? T.tealBorder : T.border}`,
               fontSize:13, lineHeight:1.6, color:T.ink,
               whiteSpace:"pre-wrap",
             }}>
@@ -1788,12 +1661,15 @@ function RiskAssessmentCard({ port }) {
 export default function App() {
   const [port,  setPort]  = useState("");
   const [model, setModel] = useState("Prophet");
-  const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "chokepoints" | "advisor"
+  const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "advisor"
+  const { isDark, toggle: toggleTheme } = useTheme();
 
   const { data: portData }                    = usePortList();
   const { data: overview, loading: ovLoad }   = useOverview(port);
   const { data: fcstData, loading: fcLoad }   = useForecast(port, model);
-  const { data: topData }                     = useTopPorts(20);
+  const { data: topData }                     = useTopPorts(20);                // asc — feeds AlternativePortsTable
+  const { data: anomalousData }                = useTopPorts(20, "desc");        // desc — feeds Most Anomalous sidebar
+  const { data: loadedData }                   = useTopLoadedPorts(10);
   const { data: compData }                    = useModelComp();
 
   const ports       = portData?.ports || [];
@@ -1834,7 +1710,7 @@ export default function App() {
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
               <div style={{
                 width:30, height:30, borderRadius:8,
-                background:`${T.teal}22`, border:`1px solid ${T.teal}44`,
+                background:T.tealSubtle, border:`1px solid ${T.tealBorder}`,
                 display:"flex", alignItems:"center", justifyContent:"center",
               }}>
                 <Anchor size={15} color={T.teal} />
@@ -1868,15 +1744,45 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Available ports sorted by congestion */}
+              {/* Most anomalous ports — z-score ranking */}
               <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
                 display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
-                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                  <Label>Port Availability</Label>
+                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                    <Label>Most Anomalous Ports</Label>
+                    <span
+                      title={anomalousData?.description || "Ports ranked by per-port z-score deviation from their own historical baseline. Highlights ports having unusual days, NOT necessarily the most loaded ports."}
+                      style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
+                    >
+                      <Info size={10} />
+                    </span>
+                  </div>
                   <span style={{ fontSize:9, color: T.inkDim }}>score ↑ = busier</span>
                 </div>
                 <SidebarPortsList
-                  topPorts={topData?.ports}
+                  topPorts={anomalousData?.ports}
+                  selectedPort={port}
+                  onSelect={setPort}
+                />
+              </div>
+
+              {/* Most loaded ports — absolute current portcalls */}
+              <div style={{ padding:"0.75rem 0 0", borderBottom:`1px solid ${T.border}`,
+                display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
+                <div style={{ padding:"0 0.9rem 0.5rem", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:5, minWidth:0 }}>
+                    <Label>Most Loaded Ports</Label>
+                    <span
+                      title={loadedData?.description || "Ports ranked by absolute current vessel call volume. Highlights the busiest ports right now."}
+                      style={{ display:"inline-flex", cursor:"help", color: T.inkDim }}
+                    >
+                      <Info size={10} />
+                    </span>
+                  </div>
+                  <span style={{ fontSize:9, color: T.inkDim }}>portcalls</span>
+                </div>
+                <SidebarLoadedPortsList
+                  loadedPorts={loadedData?.ports}
                   selectedPort={port}
                   onSelect={setPort}
                 />
@@ -1920,7 +1826,10 @@ export default function App() {
             {tab === "ports" && (
               <div style={{ display:"flex", alignItems:"center", gap:12 }}>
                 <PortSelector ports={ports} value={port} onChange={setPort} />
-                {kpi && <RiskPill level={kpi.congestion_level || kpi.traffic_level} />}
+                {kpi && <RiskPill
+                  level={kpi.congestion_level || kpi.traffic_level}
+                  unverified={kpi.live_coverage === "dark" || kpi.live_coverage === "sparse" || kpi.live_coverage === "unavailable"}
+                />}
               </div>
             )}
 
@@ -1936,6 +1845,17 @@ export default function App() {
                   )}
                 </>
               )}
+              <button
+                onClick={toggleTheme}
+                title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+                style={{
+                  background:"none", border:`1px solid ${T.border}`, borderRadius:6,
+                  cursor:"pointer", padding:"5px 7px", display:"flex", alignItems:"center",
+                  color:T.inkMid, transition:"all 0.15s",
+                }}
+              >
+                {isDark ? <Sun size={14} /> : <Moon size={14} />}
+              </button>
             </div>
           </div>
 
@@ -1946,7 +1866,7 @@ export default function App() {
             </div>
           ) : tab === "advisor" ? (
             <div style={{ height:"calc(100vh - 49px)", overflow:"hidden" }}>
-              <AiAdvisor port={port} />
+              <AiAdvisor port={port} onSelectPort={setPort} />
             </div>
           ) : !port ? (
             <div style={{ display:"flex", alignItems:"center", justifyContent:"center",
@@ -1983,6 +1903,7 @@ export default function App() {
                         isHighest={(row.congestion_score ?? 50) === maxScore}
                         isLowest={(row.congestion_score ?? 50) === minScore}
                         isFirst={i === 0}
+                        isUnverified={kpi?.live_coverage === "dark" || kpi?.live_coverage === "sparse" || kpi?.live_coverage === "unavailable"}
                       />
                     ))}
                   </div>

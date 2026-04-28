@@ -36,3 +36,11 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+# ── Editor swap files ─────────────────────────────────────────
+*.swp
+*~
+
+# ── Local-only data / DB / teammate backups (kept on disk) ────
+venv2/backend/dockwise_local.db
+venv2/backend/*.jasreen.bak

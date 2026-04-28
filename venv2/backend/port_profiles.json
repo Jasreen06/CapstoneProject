@@ -1,0 +1,127 @@
+{
+  "Los Angeles-Long Beach": {
+    "name": "Los Angeles-Long Beach",
+    "profile": "The combined Port of Los Angeles and Port of Long Beach form one of the largest container port complexes in the Western Hemisphere, handling a significant share of containerized imports entering the United States. Located in San Pedro Bay, it is a primary gateway for trans-Pacific trade with Asia.",
+    "notable": ["Major US container port complex", "Key gateway for US container imports", "Primary trans-Pacific trade gateway"]
+  },
+  "New York-New Jersey": {
+    "name": "New York-New Jersey",
+    "profile": "The Port of New York and New Jersey is a major container port on the US East Coast. Operated by the Port Authority of NY & NJ, it serves as a primary import gateway for the northeastern United States and handles a diverse mix of containerized cargo.",
+    "notable": ["Major East Coast container port", "Operated by Port Authority of NY & NJ", "Key import hub for northeastern US"]
+  },
+  "Houston": {
+    "name": "Houston",
+    "profile": "The Port of Houston is among the largest ports in the United States by foreign waterborne tonnage and a major hub for petrochemical and energy-related cargo. It stretches along the Houston Ship Channel and is critical to the US energy export supply chain.",
+    "notable": ["Among the largest US ports by foreign tonnage", "Major petrochemical hub", "Houston Ship Channel access"]
+  },
+  "Savannah": {
+    "name": "Savannah",
+    "profile": "The Port of Savannah, operated by the Georgia Ports Authority, is a rapidly growing container port and one of the largest single-terminal container facilities in the US. Its Garden City Terminal offers direct interstate highway and on-dock rail access.",
+    "notable": ["Rapidly growing container port", "Large single-terminal container facility", "On-dock rail access via CSX and Norfolk Southern"]
+  },
+  "Seattle": {
+    "name": "Seattle",
+    "profile": "The Port of Seattle, part of The Northwest Seaport Alliance with Tacoma, serves as a major gateway for trade with Asia and Alaska. It handles containers, breakbulk cargo, grain, and cruise ships in the Puget Sound region.",
+    "notable": ["Part of Northwest Seaport Alliance", "Major Asia-Pacific trade gateway", "Significant cruise operations in the Pacific Northwest"]
+  },
+  "Tacoma": {
+    "name": "Tacoma",
+    "profile": "The Port of Tacoma partners with Seattle as part of The Northwest Seaport Alliance, forming a major container port gateway in the Pacific Northwest. It specializes in containerized cargo and has extensive intermodal rail connections.",
+    "notable": ["Part of Northwest Seaport Alliance", "Major Pacific Northwest container gateway", "Strong intermodal rail connections"]
+  },
+  "Oakland": {
+    "name": "Oakland",
+    "profile": "The Port of Oakland is Northern California's primary container port and one of the major ports on the US West Coast. It serves the San Francisco Bay Area and Central Valley agricultural exporters, handling the vast majority of containerized goods moving through the region.",
+    "notable": ["Northern California's primary container port", "Serves Bay Area and Central Valley", "Major agricultural export gateway"]
+  },
+  "Charleston": {
+    "name": "Charleston",
+    "profile": "The Port of Charleston, operated by the South Carolina Ports Authority, features one of the deeper harbors on the East Coast and is a rapidly growing container port. It serves as a major hub for automotive and advanced manufacturing imports.",
+    "notable": ["Deep harbor on the East Coast", "Major automotive import hub", "Rapidly growing container volumes"]
+  },
+  "Norfolk": {
+    "name": "Norfolk",
+    "profile": "The Port of Virginia in Norfolk features some of the deepest channels on the US East Coast, capable of handling very large container vessels. It is also located near Naval Station Norfolk, one of the largest naval installations in the world.",
+    "notable": ["Deep East Coast shipping channels", "Handles very large container vessels", "Near major US naval installation"]
+  },
+  "Miami": {
+    "name": "Miami",
+    "profile": "PortMiami is among the closest US deepwater ports to the Panama Canal and a leading cruise port. It is a major gateway for trade with Latin America and the Caribbean.",
+    "notable": ["Near the Panama Canal route", "Leading US cruise port", "Gateway to Latin America and Caribbean"]
+  },
+  "New Orleans": {
+    "name": "New Orleans",
+    "profile": "The Port of New Orleans sits at the mouth of the Mississippi River, connecting Gulf shipping lanes to the extensive inland waterway system. It handles breakbulk, containers, and is known as a significant coffee import hub.",
+    "notable": ["Mississippi River gateway to inland waterways", "Significant coffee import port", "Diverse cargo: containers, breakbulk, and cruise"]
+  },
+  "Jacksonville": {
+    "name": "Jacksonville",
+    "profile": "JAXPORT is one of the leading vehicle-handling ports in the United States and a growing container hub on the South Atlantic coast. Its marine terminals serve a logistics corridor in northeast Florida.",
+    "notable": ["Leading US vehicle-handling port", "Multiple marine terminals", "Growing South Atlantic container hub"]
+  },
+  "Baltimore": {
+    "name": "Baltimore",
+    "profile": "The Port of Baltimore, operated by the Maryland Port Administration, is well known for roll-on/roll-off cargo and automobile imports. It also handles farm equipment, sugar, and gypsum in significant volumes.",
+    "notable": ["Prominent ro-ro cargo operations", "Major automobile import hub", "Handles farm equipment and sugar"]
+  },
+  "Tampa": {
+    "name": "Tampa",
+    "profile": "Port Tampa Bay is one of Florida's largest ports by tonnage, handling phosphate, petroleum products, and construction materials. It is also a growing cruise port and serves as an economic hub for central Florida's supply chain.",
+    "notable": ["One of Florida's largest ports by tonnage", "Major phosphate and petroleum handler", "Growing cruise operations"]
+  },
+  "Philadelphia": {
+    "name": "Philadelphia",
+    "profile": "PhilaPort, the Port of Philadelphia, is a major freshwater port and a significant handler of fruit, cocoa, meat, and forest products. Located on the Delaware River, it provides access to the densely populated mid-Atlantic region.",
+    "notable": ["Major freshwater port", "Significant fruit and cocoa import hub", "Delaware River access to mid-Atlantic"]
+  },
+  "Corpus Christi": {
+    "name": "Corpus Christi",
+    "profile": "The Port of Corpus Christi is among the largest US ports by tonnage and a major crude oil export hub. It is a critical node in the US energy supply chain, with pipeline connections to the Permian Basin and Eagle Ford Shale.",
+    "notable": ["Among the largest US ports by tonnage", "Major crude oil export hub", "Pipeline connections to Permian Basin"]
+  },
+  "San Diego": {
+    "name": "San Diego",
+    "profile": "The Port of San Diego is a diverse waterfront port handling cargo, cruise ships, and a fishing fleet. Located near the US-Mexico border, it serves both commercial trade and naval operations.",
+    "notable": ["Diverse port: cargo, cruise, and fishing", "Near US-Mexico border", "Naval operations presence"]
+  },
+  "Beaumont": {
+    "name": "Beaumont",
+    "profile": "The Port of Beaumont in southeast Texas is a significant military cargo port and a petroleum and petrochemical hub. It handles military equipment, grain, and forest products via the Neches River.",
+    "notable": ["Significant US military cargo port", "Petroleum and petrochemical hub", "Neches River access"]
+  },
+  "Mobile": {
+    "name": "Mobile",
+    "profile": "The Port of Mobile on Alabama's Gulf Coast is a deepwater port handling containers, steel, coal, and forest products. It has seen growth with container terminal expansion and serves as a gateway for the southeastern US.",
+    "notable": ["Alabama Gulf Coast deepwater port", "Container terminal expansion", "Handles steel, coal, and forest products"]
+  },
+  "Galveston": {
+    "name": "Galveston",
+    "profile": "The Port of Galveston is a notable cruise port and handles a variety of cargo including dry bulk, liquid bulk, and breakbulk. Located on Galveston Island at the entrance to Galveston Bay, it serves the greater Houston region.",
+    "notable": ["Notable US cruise port", "Located on Galveston Island", "Diverse cargo operations"]
+  },
+  "Boston": {
+    "name": "Boston",
+    "profile": "The Port of Boston, managed by Massport, is a major port in the New England region, handling containerized cargo, automobiles, and liquefied natural gas. The Conley Container Terminal serves as the primary facility for regional importers and exporters.",
+    "notable": ["Major New England port", "Conley Container Terminal", "Handles LNG shipments"]
+  },
+  "Honolulu": {
+    "name": "Honolulu",
+    "profile": "The Port of Honolulu is Hawaii's primary commercial port, handling the majority of goods consumed in the state. It is essential for the island's supply chain, receiving food, fuel, building materials, and consumer goods from the US mainland.",
+    "notable": ["Handles majority of Hawaii's goods", "Essential island supply chain node", "Primary mainland-to-Hawaii cargo link"]
+  },
+  "Freeport": {
+    "name": "Freeport",
+    "profile": "Port Freeport in Texas is a growing deepwater port on the Gulf Coast that handles liquid and dry bulk cargo, containers, and project cargo. It hosts LNG export operations and serves the petrochemical corridor of the Brazos Valley.",
+    "notable": ["Growing Gulf Coast deepwater port", "LNG export operations", "Serves Brazos Valley petrochemical corridor"]
+  },
+  "Wilmington, NC": {
+    "name": "Wilmington, NC",
+    "profile": "The Port of Wilmington in North Carolina is a state-owned port that handles containers, bulk, and breakbulk cargo. It features a deep channel and is growing as a refrigerated cargo hub.",
+    "notable": ["Deep-channel port", "Growing refrigerated cargo hub", "State-owned facility"]
+  },
+  "Port Everglades": {
+    "name": "Port Everglades",
+    "profile": "Port Everglades in Fort Lauderdale is one of Florida's significant ports, known for cruise operations and petroleum distribution. It serves as a fuel gateway for South Florida, handling jet fuel for regional airports.",
+    "notable": ["Significant cruise operations", "South Florida fuel gateway", "Jet fuel distribution for regional airports"]
+  }
+}

@@ -106,10 +106,26 @@ def upsert_ignore(table_name: str, df, engine=None, conflict_cols=("portname", "
     meta = MetaData()
     meta.reflect(bind=engine, only=[table_name])
     tbl = meta.tables[table_name]
+    # Only keep columns that exist in the table — ArcGIS may return extras
+    valid_cols = {c.name for c in tbl.columns}
+    df = df[[c for c in df.columns if c in valid_cols]]
+    dialect = engine.dialect.name
+    # SQLite can't bind pandas Timestamps — convert date to string
+    if dialect == "sqlite" and "date" in df.columns:
+        df = df.copy()
+        df["date"] = df["date"].astype(str)
     records = df.to_dict("records")
     with engine.connect() as conn:
-        stmt = pg_insert(tbl).values(records).on_conflict_do_nothing(
-            index_elements=list(conflict_cols)
-        )
-        conn.execute(stmt)
+        if dialect == "sqlite":
+            from sqlalchemy import text
+            cols = [c for c in df.columns]
+            placeholders = ", ".join([f":{c}" for c in cols])
+            col_names = ", ".join(cols)
+            sql = f"INSERT OR IGNORE INTO {table_name} ({col_names}) VALUES ({placeholders})"
+            conn.execute(text(sql), records)
+        else:
+            stmt = pg_insert(tbl).values(records).on_conflict_do_nothing(
+                index_elements=list(conflict_cols)
+            )
+            conn.execute(stmt)
         conn.commit()

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests as _requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -35,7 +36,9 @@ from data_cleaning import (load_and_clean, get_port_daily_series,
 from forecasting import ALL_MODELS, get_model
 from metrics import evaluate_forecast
 from weather import fetch_current_weather, fetch_weather_forecast
-from llm import chat as llm_chat, generate_followups as llm_followups
+from llm import (chat as llm_chat, generate_followups as llm_followups,
+                 generate_briefing as llm_briefing, generate_scenario as llm_scenario,
+                 generate_comparison as llm_comparison)
 import data_pull
 from forecast_tracker import save_forecast, validate, get_log
 
@@ -140,6 +143,36 @@ app.add_middleware(
 )
 
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
+
+# AIS microservice base URL (Phase 6A — staleness reconciliation)
+AIS_BASE_URL = os.environ.get("AIS_BASE_URL", "http://localhost:8001")
+_AIS_TIMEOUT_SEC = 2.0
+_STALENESS_DAYS_THRESHOLD = 7  # PortWatch lag above this triggers AIS reconciliation
+
+
+def _fetch_ais_anchor_stats(lat: float, lon: float, port_name: str,
+                             radius_nm: float = 15.0) -> dict | None:
+    """Fetch live anchor counts near a port from the AIS microservice.
+
+    Returns the parsed JSON dict on success, None on any failure
+    (timeout, connection refused, non-200, JSON error). Fail-soft by design —
+    callers must handle None as "live data unavailable".
+    """
+    try:
+        res = _requests.get(
+            f"{AIS_BASE_URL}/api/vessels/anchor-stats",
+            params={"lat": lat, "lon": lon, "radius_nm": radius_nm},
+            timeout=_AIS_TIMEOUT_SEC,
+        )
+        if res.status_code != 200:
+            logger.warning(
+                f"[Reconcile] AIS anchor-stats returned {res.status_code} for '{port_name}'"
+            )
+            return None
+        return res.json()
+    except Exception as e:
+        logger.warning(f"[Reconcile] AIS anchor-stats failed for '{port_name}': {e}")
+        return None
 
 # ──────────────────────────────────────────────
 # In-memory cache for the loaded dataset
@@ -405,6 +438,74 @@ def port_overview(port: str = Query(..., description="Port name")):
     diff = float(last7 - prior7) if (last7 == last7 and prior7 == prior7) else 0.0
     trend_direction = "rising" if diff > 2 else ("falling" if diff < -2 else "stable")
 
+    # ── Live-data reconciliation (Phase 6A) ─────────────────────────────────
+    # When PortWatch is stale, ask the AIS microservice for live anchor counts
+    # near this port. If they exceed the per-port p75 threshold, bump the
+    # displayed congestion_level by one tier. The numeric congestion_score is
+    # NEVER modified — only the displayed tier label.
+    portwatch_tier         = current_level
+    tier_adjusted          = False
+    tier_adjustment_reason = None
+    live_data_available    = None        # None = not checked (lag <= threshold)
+    live_anchor_count      = None
+    live_anchor_threshold  = None
+    # Phase 6A.1 — spatial coverage classification
+    # "covered"     = AIS sees >= 3 vessels near this port (live signal trustworthy)
+    # "sparse"      = AIS sees 1-2 vessels (live signal weak; absence of anchors not informative)
+    # "dark"        = AIS sees 0 vessels (typical for inland Great Lakes ports outside AIS reception)
+    # "unavailable" = AIS service did not respond at all
+    # None          = coverage not checked (lag <= threshold; no AIS call made)
+    live_coverage          = None
+
+    if data_lag_days > _STALENESS_DAYS_THRESHOLD:
+        from weather import PORT_COORDS
+        from port_anchor_thresholds import get_anchor_threshold
+
+        if port in PORT_COORDS:
+            p_lat, p_lon = PORT_COORDS[port]
+            ais_stats = _fetch_ais_anchor_stats(p_lat, p_lon, port)
+            if ais_stats is None:
+                live_data_available    = False
+                live_coverage          = "unavailable"
+                tier_adjustment_reason = "Live AIS data unavailable; tier reflects PortWatch only."
+            else:
+                live_data_available   = True
+                live_anchor_count     = int(ais_stats.get("anchor_count", 0))
+                threshold             = max(get_anchor_threshold(port), 5)
+                live_anchor_threshold = threshold
+                total_nearby          = int(ais_stats.get("total_nearby", 0))
+                if total_nearby >= 3:
+                    live_coverage = "covered"
+                elif total_nearby > 0:
+                    live_coverage = "sparse"
+                else:
+                    live_coverage = "dark"
+
+                # Phase 6A.1 safety guard: only allow tier-bump when live coverage is
+                # trustworthy. If we can't see the port (sparse/dark), the absence of
+                # anchors is not evidence of "no congestion" — it's evidence of
+                # "we can't see the port." Don't pretend silence is signal.
+                if live_anchor_count >= threshold and live_coverage == "covered":
+                    bumped = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "HIGH": "HIGH"}.get(
+                        current_level, current_level
+                    )
+                    if bumped != current_level:
+                        current_level          = bumped
+                        tier_adjusted          = True
+                        tier_adjustment_reason = (
+                            f"PortWatch data is {data_lag_days} days stale; "
+                            f"live AIS shows {live_anchor_count} vessels at anchor "
+                            f"near this port (threshold: {threshold}). "
+                            f"Tier adjusted upward."
+                        )
+                    else:
+                        # Already at HIGH — flag confirmation but no bump
+                        tier_adjustment_reason = (
+                            f"PortWatch data is {data_lag_days} days stale; "
+                            f"live AIS confirms {live_anchor_count} vessels at anchor — "
+                            f"already at HIGH."
+                        )
+
     kpi = {
         "port":             port,
         "congestion_score": current_score,
@@ -417,6 +518,15 @@ def port_overview(port: str = Query(..., description="Port name")):
         "avg_daily_visits": round(float(p90["portcalls"].mean()), 2),
         "total_incoming":   int(p90["import_total"].sum()) if "import_total" in p90.columns else 0,
         "total_outgoing":   int(p90["export_total"].sum()) if "export_total" in p90.columns else 0,
+        # Phase 6A — staleness reconciliation (additive, backward-compatible)
+        "portwatch_tier":         portwatch_tier,
+        "tier_adjusted":          tier_adjusted,
+        "tier_adjustment_reason": tier_adjustment_reason,
+        "live_data_available":    live_data_available,
+        "live_anchor_count":      live_anchor_count,
+        "live_anchor_threshold":  live_anchor_threshold,
+        # Phase 6A.1 — spatial coverage classification (additive)
+        "live_coverage":          live_coverage,
     }
 
     # ── Trend: last 90 days with congestion score ─────────────────────────
@@ -443,9 +553,19 @@ def port_overview(port: str = Query(..., description="Port name")):
     }
 
 
+_TOP_PORTS_DESCRIPTION = (
+    "Ports ranked by per-port z-score deviation from their own historical "
+    "baseline. Highlights ports having unusual days, NOT necessarily the "
+    "most loaded ports."
+)
+
+
 @app.get("/api/top-ports")
-def top_ports(top_n: int = Query(50)):
-    """Return ports sorted by current (last-known) congestion — lowest first."""
+def top_ports(
+    top_n: int = Query(50),
+    sort_order: str = Query("asc", regex="^(asc|desc)$"),
+):
+    """Return ports sorted by current (last-known) congestion. Default asc = least anomalous first."""
     scored = get_scored_df()
     latest = (
         scored.sort_values("date")
@@ -458,8 +578,216 @@ def top_ports(top_n: int = Query(50)):
     latest["status"] = latest["current_score"].apply(
         lambda x: "HIGH" if x >= 67 else ("MEDIUM" if x >= 33 else "LOW")
     )
-    latest = latest.sort_values("current_score", ascending=True).head(top_n)
-    return {"ports": _df_to_records(latest[["portname","current_score","last_portcalls","status"]])}
+    latest["ranking_type"] = "anomaly"
+    ascending = sort_order == "asc"
+    latest = latest.sort_values("current_score", ascending=ascending).head(top_n)
+    return {
+        "description": _TOP_PORTS_DESCRIPTION,
+        "sort_order": sort_order,
+        "ports": _df_to_records(
+            latest[["portname", "current_score", "last_portcalls", "status", "ranking_type"]]
+        ),
+    }
+
+
+# ── Phase 6B-revised, Part 2 — absolute-load ranking ────────────
+_TOP_LOADED_DESCRIPTION = (
+    "Ports ranked by absolute current vessel call volume. Highlights the "
+    "busiest ports right now."
+)
+
+
+@app.get("/api/top-loaded-ports")
+def top_loaded_ports(n: int = Query(10, ge=1, le=100)):
+    """Return ports sorted by current portcalls desc; ties broken by 7-day mean."""
+    scored = get_scored_df().sort_values(["portname", "date"]).copy()
+    scored["portcalls_7d"] = (
+        scored.groupby("portname")["portcalls"]
+        .transform(lambda s: s.rolling(7, min_periods=1).mean())
+    )
+    latest = (
+        scored.groupby("portname")
+        .last()
+        .reset_index()[["portname", "portcalls", "portcalls_7d", "congestion_score"]]
+    )
+    latest["current_portcalls"] = latest["portcalls"].round(1)
+    latest["trailing_7d_mean"] = latest["portcalls_7d"].round(2)
+    latest["congestion_level"] = latest["congestion_score"].apply(
+        lambda x: "HIGH" if x >= 67 else ("MEDIUM" if x >= 33 else "LOW")
+    )
+    latest["ranking_type"] = "absolute_load"
+    latest = latest.sort_values(
+        ["current_portcalls", "trailing_7d_mean"], ascending=[False, False]
+    ).head(n)
+    return {
+        "description": _TOP_LOADED_DESCRIPTION,
+        "ports": _df_to_records(
+            latest[[
+                "portname",
+                "current_portcalls",
+                "trailing_7d_mean",
+                "congestion_level",
+                "ranking_type",
+            ]]
+        ),
+    }
+
+
+# ── Phase 6B-revised, Part 3 — nearby-port advisor ──────────────
+def _haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R_NM = 3440.065
+    lat1r, lat2r = np.radians(lat1), np.radians(lat2)
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1r) * np.cos(lat2r) * np.sin(dlon / 2) ** 2
+    return float(2 * R_NM * np.arcsin(np.sqrt(a)))
+
+
+def _classify_recommendation(level: str, trend: str) -> str:
+    if level == "HIGH":
+        return "avoid"
+    if level == "MEDIUM" and trend == "rising":
+        return "avoid"
+    if level == "LOW" and trend in ("stable", "falling"):
+        return "good_alternative"
+    return "watch"
+
+
+@app.get("/api/advisor/nearby-ports")
+def nearby_ports(
+    port: str = Query(...),
+    radius_nm: float = Query(300.0, gt=0),
+    max_results: int = Query(6, ge=1, le=20),
+):
+    """Ports within radius_nm of the selected port, ranked by alternative-route suitability."""
+    from weather import PORT_COORDS
+
+    radius_nm = min(float(radius_nm), 1000.0)
+    if port not in PORT_COORDS:
+        raise HTTPException(404, f"Port '{port}' has no known coordinates")
+    p_lat, p_lon = PORT_COORDS[port]
+
+    scored = get_scored_df().sort_values(["portname", "date"]).copy()
+    candidates = []
+    for other, (lat, lon) in PORT_COORDS.items():
+        if other == port:
+            continue
+        d_nm = _haversine_nm(p_lat, p_lon, lat, lon)
+        if d_nm > radius_nm:
+            continue
+        sub = scored[scored["portname"] == other]
+        if sub.empty:
+            continue
+        sub_tail = sub.tail(14)
+        if len(sub_tail) < 2:
+            continue
+        last7 = sub_tail.tail(7)["portcalls"].mean()
+        prior7 = sub_tail.head(len(sub_tail) - 7)["portcalls"].mean() if len(sub_tail) > 7 else last7
+        if prior7 and prior7 > 0:
+            delta_pct = (last7 - prior7) / prior7 * 100.0
+        else:
+            delta_pct = 0.0
+        if delta_pct > 5:
+            trend = "rising"
+        elif delta_pct < -5:
+            trend = "falling"
+        else:
+            trend = "stable"
+        latest_row = sub.iloc[-1]
+        score = float(latest_row["congestion_score"])
+        level = "HIGH" if score >= 67 else ("MEDIUM" if score >= 33 else "LOW")
+        recommendation = _classify_recommendation(level, trend)
+        candidates.append({
+            "portname": other,
+            "distance_nm": round(d_nm, 1),
+            "current_score": round(score, 1),
+            "congestion_level": level,
+            "trend": trend,
+            "trend_delta_pct": round(delta_pct, 1),
+            "recommendation": recommendation,
+        })
+
+    rec_order = {"good_alternative": 0, "watch": 1, "avoid": 2}
+    candidates.sort(key=lambda c: (rec_order[c["recommendation"]], c["distance_nm"]))
+    candidates = candidates[:max_results]
+
+    return {
+        "port": port,
+        "radius_nm": radius_nm,
+        "description": (
+            f"Ports within {radius_nm:.0f} nm of {port}, ranked by "
+            "alternative-route suitability (good alternatives first, nearest first)."
+        ),
+        "ports": candidates,
+    }
+
+
+# ── Phase 6A.2 — live AIS coverage snapshot for map ring ───────
+_coverage_cache: dict = {}  # {"data": dict, "ts": float}
+_COVERAGE_TTL = 30          # seconds
+
+
+@app.get("/api/coverage-snapshot")
+def coverage_snapshot():
+    """Return per-port live-AIS coverage classification used by the map ring.
+
+    Response shape: {"coverage": {"<port>": "covered"|"sparse"|"dark"|"unavailable"}, "cached": bool}
+
+    Fails open by design: if anything goes wrong (AIS service down, timeout,
+    unexpected exception), this returns {"coverage": {}}. The frontend then
+    treats every port as "covered" — i.e. the visual coverage signal fails
+    OPEN, not closed. Honest data is preferred over pessimistic data when
+    our own pipeline is the failure mode.
+    """
+    now = time.time()
+    if _coverage_cache.get("data") is not None and (now - _coverage_cache.get("ts", 0)) < _COVERAGE_TTL:
+        return {"coverage": _coverage_cache["data"], "cached": True}
+
+    try:
+        from weather import PORT_COORDS
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _classify(item):
+            name, (lat, lon) = item
+            stats = _fetch_ais_anchor_stats(lat, lon, name)
+            if stats is None:
+                return name, "unavailable"
+            total_nearby = int(stats.get("total_nearby", 0))
+            if total_nearby >= 3:
+                return name, "covered"
+            if total_nearby > 0:
+                return name, "sparse"
+            return name, "dark"
+
+        items = list(PORT_COORDS.items())
+        result: dict[str, str] = {}
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = [ex.submit(_classify, it) for it in items]
+            for fut in as_completed(futures, timeout=8.0):
+                try:
+                    name, cov = fut.result()
+                    result[name] = cov
+                except Exception:
+                    pass
+
+        # Fails-open guard: if every port came back "unavailable", the AIS
+        # service itself is almost certainly down. Returning a full dict of
+        # "unavailable" would dash the entire map, falsely implying all live
+        # data is bad. Honest behaviour when our own pipeline is the failure
+        # mode: return {} so the frontend renders every port as covered.
+        if result and all(v == "unavailable" for v in result.values()):
+            logger.warning(
+                f"/api/coverage-snapshot: all {len(result)} ports unavailable — "
+                f"AIS service likely down. Returning {{}} (fails-open)."
+            )
+            result = {}
+
+        _coverage_cache["data"] = result
+        _coverage_cache["ts"] = now
+        return {"coverage": result, "cached": False}
+    except Exception as e:
+        logger.warning(f"/api/coverage-snapshot failed: {e}")
+        return {"coverage": {}, "cached": False}
 
 
 @app.get("/api/forecast")
@@ -1067,6 +1395,229 @@ def risk_assessment(port: str = Query(..., description="Port name")):
     }
     _cache[cache_key] = response
     return response
+
+
+# ── Advisor: Briefing (3A) ───────────────────────────────────
+_briefing_cache: dict = {}  # {"cards": [...], "ts": float}
+_BRIEFING_TTL = 600  # 10 minutes
+
+@app.post("/api/advisor/briefing")
+def advisor_briefing():
+    """Generate 3 insight cards from current port data. Cached for 10 minutes."""
+    now = time.time()
+    if _briefing_cache.get("cards") and (now - _briefing_cache.get("ts", 0)) < _BRIEFING_TTL:
+        return {"cards": _briefing_cache["cards"], "cached": True}
+
+    scored = get_scored_df()
+    latest = (
+        scored.sort_values("date")
+        .groupby("portname")
+        .last()
+        .reset_index()
+    )
+
+    # Build port summaries with trend info
+    summaries = []
+    for _, row in latest.iterrows():
+        port_hist = scored[scored["portname"] == row["portname"]].sort_values("date")
+        last = port_hist["date"].max()
+        last7 = port_hist[port_hist["date"] > last - pd.Timedelta(days=7)]["congestion_score"].mean()
+        prior7 = port_hist[
+            (port_hist["date"] > last - pd.Timedelta(days=14)) &
+            (port_hist["date"] <= last - pd.Timedelta(days=7))
+        ]["congestion_score"].mean()
+        diff = float(last7 - prior7) if (last7 == last7 and prior7 == prior7) else 0.0
+        trend = "rising" if diff > 2 else ("falling" if diff < -2 else "stable")
+
+        p90 = port_hist[port_hist["date"] >= last - pd.Timedelta(days=89)]
+        baseline_mean = float(p90["congestion_score"].mean()) if not p90.empty else 50.0
+        current_score = round(float(row["congestion_score"]), 1)
+        pct_vs = round((current_score - baseline_mean) / max(baseline_mean, 1) * 100, 1)
+
+        summaries.append({
+            "portname": row["portname"],
+            "score": current_score,
+            "status": "HIGH" if current_score >= 67 else ("MEDIUM" if current_score >= 33 else "LOW"),
+            "last_portcalls": round(float(row["portcalls"]), 1),
+            "trend_direction": trend,
+            "pct_vs_normal": pct_vs,
+        })
+
+    # Sort by most interesting signals: biggest abs deviation from normal first
+    summaries.sort(key=lambda x: abs(x.get("pct_vs_normal", 0)), reverse=True)
+
+    try:
+        cards = llm_briefing(summaries)
+        if cards:
+            _briefing_cache["cards"] = cards
+            _briefing_cache["ts"] = now
+            return {"cards": cards, "cached": False}
+    except Exception as e:
+        logger.error(f"/api/advisor/briefing error: {e}")
+
+    raise HTTPException(503, "Could not generate briefing. LLM may be unavailable.")
+
+
+# ── Advisor: Scenario Simulator (3B) ────────────────────────
+class ScenarioRequest(BaseModel):
+    scenario: str
+
+@app.post("/api/advisor/scenario")
+def advisor_scenario(req: ScenarioRequest):
+    """Run a what-if scenario analysis using current port + chokepoint data."""
+    if not req.scenario.strip():
+        raise HTTPException(400, "scenario must not be empty.")
+
+    scored = get_scored_df()
+    latest = (
+        scored.sort_values("date")
+        .groupby("portname")
+        .last()
+        .reset_index()
+    )
+    summaries = [
+        {
+            "portname": row["portname"],
+            "score": round(float(row["congestion_score"]), 1),
+            "status": "HIGH" if row["congestion_score"] >= 67 else ("MEDIUM" if row["congestion_score"] >= 33 else "LOW"),
+        }
+        for _, row in latest.iterrows()
+    ]
+
+    chokepoints_data = None
+    try:
+        df_chk = get_chokepoint_df()
+        chk_latest = df_chk.sort_values("date").groupby("portname").last().reset_index()
+        chokepoints_data = [
+            {
+                "portname": row["portname"],
+                "disruption_score": _safe_float(row["disruption_score"]),
+                "disruption_level": row["disruption_level"],
+            }
+            for _, row in chk_latest.iterrows()
+        ]
+    except Exception:
+        pass
+
+    try:
+        result = llm_scenario(req.scenario, summaries, chokepoints_data)
+        return result
+    except Exception as e:
+        logger.error(f"/api/advisor/scenario error: {e}")
+        raise HTTPException(503, f"Scenario analysis failed: {e}")
+
+
+# ── Advisor: Port Comparison (3C) ───────────────────────────
+class CompareRequest(BaseModel):
+    ports: list[str]
+
+@app.post("/api/advisor/compare")
+def advisor_compare(req: CompareRequest):
+    """Compare 2-3 ports on 6 axes with LLM commentary."""
+    if len(req.ports) < 2 or len(req.ports) > 3:
+        raise HTTPException(400, "Provide 2 or 3 ports to compare.")
+
+    scored = get_scored_df()
+    result_ports = []
+
+    for port_name in req.ports:
+        p = scored[scored["portname"] == port_name].sort_values("date")
+        if p.empty:
+            raise HTTPException(404, f"Port '{port_name}' not found.")
+
+        last = p["date"].max()
+        last_row = p.iloc[-1]
+        current_score = round(float(last_row["congestion_score"]), 1)
+
+        # Volatility: CV of last 90 days congestion score
+        p90 = p[p["date"] >= last - pd.Timedelta(days=89)]
+        mean_90 = float(p90["congestion_score"].mean()) if not p90.empty else 50.0
+        std_90 = float(p90["congestion_score"].std()) if not p90.empty else 0.0
+        volatility = round(min((std_90 / max(mean_90, 1)) * 100, 100), 1)
+
+        # 7-day trend momentum: difference last7 vs prior7, scaled to 0-100
+        last7 = p[p["date"] > last - pd.Timedelta(days=7)]["congestion_score"].mean()
+        prior7 = p[
+            (p["date"] > last - pd.Timedelta(days=14)) &
+            (p["date"] <= last - pd.Timedelta(days=7))
+        ]["congestion_score"].mean()
+        diff = float(last7 - prior7) if (last7 == last7 and prior7 == prior7) else 0.0
+        # Map diff (-20..+20) to 0-100 scale (50 = stable)
+        trend_score = round(min(max((diff + 20) / 40 * 100, 0), 100), 1)
+
+        # Weather risk: try to fetch, default to 0
+        weather_risk = 0
+        try:
+            current_weather = fetch_current_weather(port_name)
+            if current_weather and current_weather.get("risk"):
+                risk_level = current_weather["risk"].get("level", "LOW")
+                weather_risk = 80 if risk_level == "HIGH" else (50 if risk_level == "MEDIUM" else 10)
+        except Exception:
+            pass
+
+        # Upstream chokepoint risk: average disruption of relevant chokepoints
+        chokepoint_risk = 50  # default
+        try:
+            chk_names = _get_port_chokepoints(port_name)
+            df_chk = get_chokepoint_df()
+            chk_scores = []
+            for cn in chk_names:
+                chk = df_chk[df_chk["portname"] == cn].sort_values("date")
+                if not chk.empty:
+                    chk_scores.append(float(chk.iloc[-1]["disruption_score"]))
+            if chk_scores:
+                chokepoint_risk = round(sum(chk_scores) / len(chk_scores), 1)
+        except Exception:
+            pass
+
+        # Inbound vessel count: not available from port data, use portcalls as proxy
+        inbound = round(float(last_row["portcalls"]), 1)
+        # Normalize to 0-100 based on typical range (0-50 portcalls/day → 0-100)
+        inbound_norm = round(min(inbound / 50 * 100, 100), 1)
+
+        result_ports.append({
+            "portname": port_name,
+            "congestion_score": current_score,
+            "volatility": volatility,
+            "trend": trend_score,
+            "weather_risk": weather_risk,
+            "chokepoint_risk": chokepoint_risk,
+            "inbound_vessels": inbound_norm,
+        })
+
+    # LLM commentary
+    commentary = ""
+    try:
+        commentary = llm_comparison(result_ports)
+    except Exception as e:
+        logger.warning(f"Comparison commentary failed: {e}")
+        commentary = "Commentary unavailable."
+
+    return {"ports": result_ports, "commentary": commentary}
+
+
+# ── Port profiles (static JSON) ──────────────────────────────
+_port_profiles: dict | None = None
+
+def _load_port_profiles() -> dict:
+    global _port_profiles
+    if _port_profiles is None:
+        profiles_path = Path(__file__).parent / "port_profiles.json"
+        if profiles_path.exists():
+            with open(profiles_path) as f:
+                _port_profiles = json.load(f)
+        else:
+            _port_profiles = {}
+    return _port_profiles
+
+
+@app.get("/api/port-profile/{name}")
+def port_profile(name: str):
+    """Return the static profile for a port, or 404 if not available."""
+    profiles = _load_port_profiles()
+    if name not in profiles:
+        raise HTTPException(404, f"Profile not available for '{name}'.")
+    return profiles[name]
 
 
 @app.get("/health")

@@ -11,9 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse
 
@@ -94,6 +95,53 @@ async def list_vessels():
     vessels = await vessel_store.get_all_vessels()
     result = [v for v in vessels if v.get("lat") and v.get("lon")]
     return {"vessels": result, "count": len(result)}
+
+
+@app.get("/api/vessels/anchor-stats")
+async def anchor_stats(
+    lat: float = Query(..., description="Port latitude"),
+    lon: float = Query(..., description="Port longitude"),
+    radius_nm: float = Query(15.0, description="Search radius in nautical miles"),
+):
+    """Count vessels within `radius_nm` of (lat, lon) by nav status.
+
+    Used by the main backend's staleness reconciliation (api.py:port_overview).
+    """
+    R_NM = 3440.065
+
+    def haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        lat1_r, lat2_r = math.radians(lat1), math.radians(lat2)
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = math.sin(dlat / 2) ** 2 + math.cos(lat1_r) * math.cos(lat2_r) * math.sin(dlon / 2) ** 2
+        return 2 * R_NM * math.asin(math.sqrt(a))
+
+    vessels = await vessel_store.get_all_vessels()
+    anchor_count = 0
+    moored_count = 0
+    total_nearby = 0
+    for v in vessels:
+        v_lat = v.get("lat")
+        v_lon = v.get("lon")
+        if v_lat is None or v_lon is None:
+            continue
+        if haversine_nm(lat, lon, v_lat, v_lon) <= radius_nm:
+            total_nearby += 1
+            status = (v.get("nav_status_label") or "").strip()
+            if status == "At Anchor":
+                anchor_count += 1
+            elif status == "Moored":
+                moored_count += 1
+
+    return {
+        "lat": lat,
+        "lon": lon,
+        "radius_nm": radius_nm,
+        "anchor_count": anchor_count,
+        "moored_count": moored_count,
+        "total_nearby": total_nearby,
+        "vessel_store_size": len(vessels),
+    }
 
 
 @app.get("/health")
