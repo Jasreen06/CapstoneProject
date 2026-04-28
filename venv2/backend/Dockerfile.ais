@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# AIS service only needs FastAPI + websockets — no ML stack
+COPY requirements.ais.txt .
+RUN pip install --no-cache-dir -r requirements.ais.txt
+
+COPY . .
+
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8001
+
+CMD ["sh", "-c", "exec uvicorn AIS.ais_api:app --host 0.0.0.0 --port ${PORT:-8001}"]
