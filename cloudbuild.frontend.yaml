@@ -40,8 +40,8 @@ steps:
 
 substitutions:
   _REGION: us-central1
-  _REACT_APP_API_URL: https://placeholder.run.app
-  _REACT_APP_AIS_URL: https://placeholder.run.app
+  _REACT_APP_API_URL: https://dockwise-backend-322700197744.us-central1.run.app
+  _REACT_APP_AIS_URL: https://capstoneproject-322700197744.us-central1.run.app
 
 options:
   logging: CLOUD_LOGGING_ONLY
