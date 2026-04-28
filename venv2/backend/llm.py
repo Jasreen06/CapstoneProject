@@ -25,128 +25,56 @@ logger = logging.getLogger(__name__)
 # BTS Freight Indicators, MARAD Port Statistics, public domain
 # ─────────────────────────────────────────────────────────────
 MARITIME_KNOWLEDGE = """
-=== MARITIME KNOWLEDGE BASE ===
+=== DOCKWISE SYSTEM REFERENCE ===
 
---- GLOBAL CHOKEPOINTS ---
-Suez Canal (Egypt): Connects Red Sea to Mediterranean. ~12% of global trade and ~30% of container
-  traffic transits daily. Blockages (e.g., Ever Given 2021) cause immediate ripple effects on
-  Europe-Asia lanes. Average transit: 50-60 vessels/day. Controlled by Suez Canal Authority.
-  Risk drivers: Houthi attacks (2024–present), piracy in Red Sea, vessel size constraints.
+--- CONGESTION SCORING (DockWise 0-100 scale) ---
+0-33  LOW   : Traffic below 90-day Prophet+XGBoost baseline (port operating with capacity)
+34-66 MEDIUM: Near-normal, monitor for trend changes
+67-100 HIGH : Traffic significantly above baseline — expect delays, berth waits up to 3-5 days
 
-Panama Canal (Panama): Connects Pacific to Atlantic. ~5% of global seaborne trade, critical for
-  US East Coast imports from Asia. Drought in 2023–24 forced transit reductions to 18–22 ships/day
-  (vs normal 36–38). Locks limit vessel beam to ~49m (Neopanamax up to 51m). Risk: drought,
-  mechanical failures, geopolitical tensions.
+--- CHOKEPOINT-TO-PORT LAG TABLE ---
+Empirically derived from negative cross-correlation analysis on 7 years of IMF PortWatch data
+(2019-2026). Only pairs showing a disruption signal (chokepoint transits drop -> port congestion
+rises) are included. Coverage = ports showing the signal out of total ports on that coast.
 
-Strait of Hormuz (Iran/Oman): ~20% of global oil supply and ~25% of LNG transits daily.
-  Controlled approaches by Iran. Any closure would cause immediate crude oil price spikes.
-  Average: 20–21 tankers/day. Risk: Iran-US tensions, naval incidents, military exercises.
+Suez Canal        -> East Coast:  ~35 days  (15/25 ports show signal)
+Bab el-Mandeb     -> East Coast:  ~28 days  (15/25 ports show signal)
+  NOTE: NY-NJ, Baltimore, Savannah, Boston show NO disruption signal from Bab el-Mandeb
+  — these large ports appear to absorb diversions without measurable congestion impact.
+Malacca Strait    -> West Coast:  ~24 days  (6/12 ports show signal)
+Taiwan Strait     -> West Coast:  ~28 days  (9/12 ports show signal)
+Panama Canal      -> West Coast:  ~35 days  (9/12 ports show signal)
+Panama Canal      -> East Coast:  ~42 days  (17/25 ports show signal)
+Panama Canal      -> Gulf Coast:  ~28 days  (5/12 ports show signal)
+Strait of Hormuz  -> Gulf Coast:  ~49 days  (5/12 ports show signal)
+Panama Canal      -> Great Lakes: ~49 days  (9/10 ports show signal)
 
-Malacca Strait (Malaysia/Singapore/Indonesia): World's busiest shipping lane. ~25% of global
-  trade, ~15 million barrels of oil/day. 80% of China's oil imports pass through here. Narrow
-  (2.5km at Phillips Channel). Risk: piracy, vessel groundings, congestion at Singapore.
+Not every port responds to every chokepoint. When a port shows no signal, it likely
+routes cargo via alternate lanes or has enough capacity to absorb disruption-driven bunching.
 
-Bab el-Mandeb Strait (Yemen/Djibouti): Links Red Sea to Gulf of Aden. ~9% of global trade.
-  Houthi attacks since late 2023 diverted 90% of container traffic away from Suez → Cape of Good
-  Hope route, adding 10–14 days and $1M+ in fuel per voyage.
+--- WEATHER RISK (computed live by weather agent) ---
+The weather agent already applies these thresholds to live OpenWeatherMap data and
+reports a computed risk level (LOW/MEDIUM/HIGH) with specific reasons.
+HIGH   = wind >= 20 m/s (crane ops suspended) OR visibility <= 500m OR severe weather
+MEDIUM = wind >= 15 m/s (crane ops marginal) OR visibility <= 1000m OR heavy rain
 
-Dover Strait (UK/France): Busiest shipping lane by vessel count. ~500 vessels/day. Critical for
-  intra-European trade. Risk: poor weather, collisions, UK-EU regulatory changes.
-
-Taiwan Strait: ~48% of global container fleet transits annually. Crucial for East Asia exports.
-  Risk: China-Taiwan tensions, military exercises causing vessel diversions.
-
-Gibraltar Strait: 100,000+ vessels/year. Gateway between Atlantic and Mediterranean.
-
-Luzon Strait (Philippines): Alternative Pacific route if South China Sea is disrupted.
-
---- US PORT CLUSTERS & CHARACTERISTICS ---
-WEST COAST (LA/Long Beach, Seattle, Oakland, Tacoma):
-  - Handle ~40% of US containerized imports from Asia
-  - LA-Long Beach complex: largest US port complex, 9–10M TEUs/year
-  - Vulnerable to: labor disputes (ILWU), Asia-origin chokepoint disruptions (Malacca, Taiwan Strait)
-  - Typical lead time from Shanghai: 14–18 days via Transpacific
-
-EAST COAST (New York/NJ, Savannah, Charleston, Baltimore, Norfolk):
-  - Growing share after Panama Canal expansion (2016) enabled larger vessels
-  - Savannah: fastest growing US port, ~6M TEUs/year; major hub for Southeast US
-  - Baltimore: key auto and RoRo hub (Francis Scott Key Bridge collapse 2024 = major disruption)
-  - Vulnerable to: Suez/Bab el-Mandeb disruptions affecting Europe-Asia-US routes
-
-GULF COAST (Houston, New Orleans, Corpus Christi):
-  - Houston: largest US port by total tonnage; critical for petrochemicals, LNG exports
-  - New Orleans: major bulk commodity (grain, coal) export hub for Midwest farm belt
-  - Vulnerable to: hurricane season (June–November), Hormuz disruptions for energy trade
-
-GREAT LAKES (Chicago, Detroit, Cleveland, Duluth):
-  - Limited to Seaway-size vessels (max ~225m LOA)
-  - Seasonal: closed to most large vessel traffic Nov–March (ice)
-  - Key commodities: steel, iron ore, limestone, grain
-
---- SUPPLY CHAIN RISK FACTORS ---
-Congestion Score Interpretation (DockWise 0–100 scale):
-  0–33  LOW   : Traffic below 90-day baseline (port operating with capacity)
-  34–66 MEDIUM: Near-normal, monitor for trend changes
-  67–100 HIGH : Traffic significantly above baseline — expect delays, anchorage queues,
-                berth waits up to 3–5 days, elevated drayage costs
-
-Leading Indicators for Port Congestion (14–28 day lag):
-  - Chokepoint disruption score spikes typically arrive at US ports within 14–28 days
-  - Suez/Bab el-Mandeb → East Coast ports (~28 days)
-  - Malacca/Taiwan Strait → West Coast ports (~14–18 days)
-  - Panama Canal restrictions → Both coasts (~7–14 days)
-
-Weather Risk Thresholds (Port Operations):
-  - Wind ≥ 15 m/s (33 knots): Container crane operations suspended at many terminals
-  - Wind ≥ 20 m/s (39 knots, near gale): All outdoor cargo ops suspended
-  - Visibility ≤ 1 km: Vessel approach/departure suspended (VTS restriction)
-  - Heavy rain (>5 mm/h): Reduced productivity, documentation delays
-
-Seasonal Patterns:
-  - Peak season: Aug–Oct (pre-Christmas imports; US West Coast congestion peaks)
-  - Chinese New Year (Jan/Feb): Factory shutdowns → vessel bunching 2–3 weeks later
-  - Hurricane season (June–Nov): Gulf/East Coast risk elevated
-  - Winter storms: Great Lakes closures; Northeast port weather risk
-
-Freight Rate Context:
-  - Freightos Baltic Index (FBX): Global container spot rates; >$5,000/FEU = tight market
-  - Baltic Dry Index (BDI): Dry bulk demand indicator; >2,000 = elevated bulk demand
-  - Diversion via Cape of Good Hope adds ~$600–800 in daily bunker fuel costs per vessel
-
---- RECOMMENDATIONS FRAMEWORK ---
-For HIGH congestion port:
-  1. Consider alternative nearby ports (e.g., Oakland instead of LA-LB)
-  2. Expedite customs pre-clearance to minimize dwell time
-  3. Check upstream chokepoint disruption scores for 14–28 day forward outlook
-  4. Consider rail-air transshipment for time-sensitive cargo
-  5. Add 3–5 buffer days to supply chain schedule
-
-For chokepoint disruption:
-  1. Suez HIGH: Expect Cape of Good Hope diversions; add 10–14 transit days
-  2. Panama LOW capacity: Explore Suez alternative or All-Water East Coast service
-  3. Hormuz HIGH: Energy price hedging; check alternative LNG/crude sources
-  4. Malacca HIGH: Lombok Strait alternative (adds ~1 day but avoids congestion)
-
-For weather risk:
-  1. HIGH ops risk: Delay vessel arrivals by 12–24h; pre-notify terminal
-  2. Storm surge risk (Gulf Coast): Move anchorage outside storm track
-  3. Cold weather: Pre-heat systems; check ice classification requirements (Great Lakes)
-=== END KNOWLEDGE BASE ===
+=== END SYSTEM REFERENCE ===
 """
 
 SYSTEM_PROMPT = (
     "You are DockWise AI, a maritime port intelligence advisor. "
     "You help logistics managers, port operators, and supply chain analysts understand "
     "port congestion, chokepoint disruptions, weather risks, and make practical recommendations.\n\n"
-    "Use the MARITIME KNOWLEDGE BASE and LIVE DASHBOARD DATA in the user's message "
-    "to give accurate, specific, and actionable advice.\n\n"
+    "You will receive two inputs: DOCKWISE SYSTEM REFERENCE (scoring definitions and empirically "
+    "derived chokepoint lag table) and LIVE DASHBOARD DATA (current port scores, forecasts, "
+    "weather, vessel counts). Use both together with your own maritime domain knowledge to give "
+    "accurate, specific, and actionable advice.\n\n"
     "Guidelines:\n"
     "- Be concise and direct. Lead with the most important insight.\n"
-    "- When congestion is HIGH, always suggest concrete mitigation actions.\n"
-    "- Reference specific scores, dates, and chokepoint names from the live data.\n"
-    "- If asked about something not in the data, use your maritime knowledge base.\n"
-    "- Format lists with bullet points for readability.\n"
-    "- Do not speculate about political events beyond what the knowledge base describes.\n\n"
+    "- Always ground your answer in the live data scores provided — cite specific numbers.\n"
+    "- Use the lag table to reason about forward-looking chokepoint impacts.\n"
+    "- For recommendations, apply your maritime expertise — do not wait to be told what to suggest.\n"
+    "- Format lists with bullet points for readability.\n\n"
     "IMPORTANT: You MUST respond with valid JSON in this exact format:\n"
     '{"answer": "<your full answer text here>", "sources": ["<source1>", "<source2>"]}\n\n'
     "CRITICAL JSON RULES:\n"
