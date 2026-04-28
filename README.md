@@ -97,10 +97,17 @@
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Server:** FastAPI served by Uvicorn on port **8004**
-**AIS Server:** Standalone FastAPI on port **8001** (live vessel streaming)
-**Frontend:** React on port **3000**
-**State:** In-memory cache (DataFrames loaded once; V2 scores computed at startup)
+**Server:** FastAPI served by Uvicorn on port **8004** (local) / Cloud Run (production)
+**AIS Server:** Standalone FastAPI on port **8001** (local) / Cloud Run (production)
+**Frontend:** React on port **3000** (local) / Cloud Run (production)
+**State:** In-memory cache (DataFrames loaded from `DATABASE_URL` on startup; V2 scores computed at startup)
+
+### Production URLs (Cloud Run)
+| Service | URL |
+|---------|-----|
+| Frontend | `https://dockwise-frontend-322700197744.us-central1.run.app` |
+| Main Backend | `https://dockwise-backend-322700197744.us-central1.run.app` |
+| AIS Backend | `https://capstoneproject-322700197744.us-central1.run.app` |
 
 ---
 
@@ -444,13 +451,17 @@ Based on the chokepoint's current disruption level:
 ```
 DockWise_AI/
 ├── README.md
+├── cloudbuild.frontend.yaml           ← Cloud Build config for frontend deployment
 │
 └── venv2/
     ├── backend/
-    │   ├── .env                       ← API keys
+    │   ├── .env                       ← API keys (local only — use Cloud Run env vars in prod)
+    │   ├── Dockerfile                 ← Main backend container (port 8004)
+    │   ├── Dockerfile.ais             ← AIS backend container (port 8001)
     │   ├── api.py                     ← FastAPI server (port 8004) + V2 scoring
     │   ├── data_pull.py               ← ArcGIS incremental fetch
-    │   ├── data_cleaning.py           ← Data normalisation + scoring
+    │   ├── data_cleaning.py           ← Data normalisation + scoring (DB or CSV)
+    │   ├── db.py                      ← SQLAlchemy engine (reads DATABASE_URL)
     │   ├── forecasting.py             ← ARIMA, Prophet, XGBoost models
     │   ├── congestion_agent.py        ← V2 ensemble congestion scoring
     │   ├── vessel_agent.py            ← Live AIS vessel classification
@@ -462,8 +473,8 @@ DockWise_AI/
     │   ├── model_comparison.py        ← Walk-forward CV across models
     │   ├── feature_engineering.py     ← Feature engineering utilities
     │   ├── forecast_tracker.py        ← Forecast tracking
-    │   ├── portwatch_us_data.csv      ← US port data
-    │   ├── chokepoint_data.csv        ← Chokepoint data
+    │   ├── portwatch_us_data.csv      ← US port data (local fallback; prod uses DB)
+    │   ├── chokepoint_data.csv        ← Chokepoint data (local fallback; prod uses DB)
     │   └── AIS/
     │       ├── __init__.py
     │       ├── ais_consumer.py        ← WebSocket consumer for aisstream.io
@@ -471,10 +482,11 @@ DockWise_AI/
     │       └── ais_api.py             ← FastAPI REST + SSE server (port 8001)
     │
     └── frontend/
+        ├── Dockerfile                 ← Frontend container (nginx, port 80)
         └── src/
             ├── App.jsx                ← Main app (4 tabs, sidebar, all components)
             ├── VesselMap.jsx          ← Live vessel map (Leaflet + AIS SSE)
-            ├── hooks/useApi.js        ← API hooks
+            ├── hooks/useApi.js        ← API hooks (reads REACT_APP_API_URL at build time)
             └── index.js              ← Entry point
 ```
 
@@ -489,11 +501,17 @@ xgboost, scikit-learn, requests, python-dotenv, langchain-groq,
 langchain-core, websockets
 ```
 
-### Environment Variables (`.env`)
+### Environment Variables (`.env` for local / Cloud Run env vars for production)
 ```
 WEATHER_API_KEY=your_openweathermap_api_key
 GROQ_API_KEY=your_groq_api_key
 AISSTREAM_API_KEY=your_aisstream_api_key
+
+# Required for Cloud Run — points to Supabase/PostgreSQL (replaces CSV files)
+DATABASE_URL=postgresql://user:password@host:5432/dbname
+
+# Required for Cloud Run — set to the frontend Cloud Run URL (no trailing slash)
+ALLOWED_ORIGINS=https://dockwise-frontend-322700197744.us-central1.run.app
 ```
 
 ---
@@ -526,10 +544,42 @@ python data_pull.py
 ```
 > Best run on Tuesdays after 9 AM ET when PortWatch publishes fresh data.
 
-### Accessing the Dashboard
+### Accessing the Dashboard (Local)
 - Frontend: `http://localhost:3000`
 - API docs: `http://localhost:8004/docs`
 - AIS API docs: `http://localhost:8001/docs`
+
+---
+
+## 15b. Cloud Run Deployment
+
+### Prerequisites
+- GCP project with Cloud Build, Cloud Run, and Artifact Registry enabled
+- Artifact Registry repository `dockwise` created in `us-central1`:
+  ```bash
+  gcloud artifacts repositories create dockwise \
+    --repository-format=docker \
+    --location=us-central1
+  ```
+
+### Deploy via Cloud Build triggers
+Each service has its own Cloud Build config at the project root:
+- `cloudbuild.frontend.yaml` — builds and deploys the React frontend
+- Backend services are deployed separately with their own Dockerfiles
+
+### Backend env vars (set once per service)
+```bash
+gcloud run services update dockwise-backend --region=us-central1 \
+  --update-env-vars DATABASE_URL="...",GROQ_API_KEY="...",WEATHER_API_KEY="...",\
+ALLOWED_ORIGINS="https://dockwise-frontend-322700197744.us-central1.run.app"
+
+gcloud run services update dockwise-ais --region=us-central1 \
+  --update-env-vars AISSTREAM_API_KEY="...",\
+ALLOWED_ORIGINS="https://dockwise-frontend-322700197744.us-central1.run.app"
+```
+
+### Frontend build-time env vars
+`REACT_APP_API_URL` and `REACT_APP_AIS_URL` are baked in at build time — they are set as substitutions in `cloudbuild.frontend.yaml` and cannot be changed via Cloud Run env vars.
 
 ---
 
@@ -544,6 +594,9 @@ python data_pull.py
 | PortWatch data 4-11 days old | Intrinsic source lag + weekly Tuesday updates | Run `data_pull.py` weekly; UI shows data date |
 | V2 scoring slow on first request | Prophet fits for 118 ports | One-time cost, cached after first run |
 | Low-volume port false HIGH scores | 1 vessel at near-zero baseline | std floor of 2.0 prevents z-score spikes |
+| No ports shown on Cloud Run frontend | `REACT_APP_API_URL` baked in as placeholder at build time | Update `cloudbuild.frontend.yaml` substitutions with real backend URLs and retrigger build |
+| CORS errors in browser console | `ALLOWED_ORIGINS` not set on backend Cloud Run services | Set `ALLOWED_ORIGINS` env var to frontend Cloud Run URL (no trailing slash) on both backend services |
+| `top-ports` / `top-loaded-ports` slow on Cloud Run | Prophet fits 118 ports on first request; Cloud Run cold start adds latency | Results are cached after first call; subsequent requests are fast |
 
 ---
 
