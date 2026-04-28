@@ -1,0 +1,43 @@
+steps:
+  # Build the frontend image with backend URLs baked in at build time
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - REACT_APP_API_URL=${_REACT_APP_API_URL}
+      - --build-arg
+      - REACT_APP_AIS_URL=${_REACT_APP_AIS_URL}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/dockwise/frontend:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/dockwise/frontend:latest
+      - venv2/frontend
+
+  - name: gcr.io/cloud-builders/docker
+    args: [push, ${_REGION}-docker.pkg.dev/${PROJECT_ID}/dockwise/frontend:${SHORT_SHA}]
+
+  - name: gcr.io/cloud-builders/docker
+    args: [push, ${_REGION}-docker.pkg.dev/${PROJECT_ID}/dockwise/frontend:latest]
+
+  # Deploy to Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - dockwise-frontend
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/dockwise/frontend:${SHORT_SHA}
+      - --region=${_REGION}
+      - --port=80
+      - --memory=256Mi
+      - --cpu=1
+      - --allow-unauthenticated
+      - --quiet
+
+substitutions:
+  _REGION: us-central1
+  _REACT_APP_API_URL: https://placeholder.run.app
+  _REACT_APP_AIS_URL: https://placeholder.run.app
+
+options:
+  logging: CLOUD_LOGGING_ONLY
