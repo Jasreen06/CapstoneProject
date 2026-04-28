@@ -206,6 +206,22 @@ function getPulseIcon(score) {
   return _pulseIconCache[tier];
 }
 
+// Cached anchor divIcons for port centers — one per congestion tier color
+const _portAnchorCache = {};
+function getPortAnchorIcon(score) {
+  const color = score >= 67 ? "#EF4444" : score >= 33 ? "#F59E0B" : "#10B981";
+  if (_portAnchorCache[color]) return _portAnchorCache[color];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="22"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>`;
+  const icon = L.divIcon({
+    html: svg,
+    className: "",
+    iconSize: [16, 16],
+    iconAnchor: [8, 8],
+  });
+  _portAnchorCache[color] = icon;
+  return icon;
+}
+
 /* ── SSE hook for live vessels ───────────────────────────── */
 function useVesselStream() {
   const [vessels, setVessels] = useState([]);
