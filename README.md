@@ -19,8 +19,9 @@
 12. [Port-to-Chokepoint Mapping](#12-port-to-chokepoint-mapping)
 13. [File Structure](#13-file-structure)
 14. [Environment Setup](#14-environment-setup)
-15. [How to Run](#15-how-to-run)
-16. [Known Issues & Workarounds](#16-known-issues--workarounds)
+15. [How to Run — Local](#15-how-to-run)
+16. [Cloud Run Deployment](#16-cloud-run-deployment)
+17. [Known Issues & Workarounds](#17-known-issues--workarounds)
 
 ---
 
@@ -118,13 +119,13 @@
 - **Coverage:** 118 US ports, daily records
 - **Update schedule:** Weekly on Tuesdays at 9 AM ET, with 3-7 day processing lag (total lag: 4-11 days)
 - **Key fields:** `portname`, `date`, `portcalls`, vessel type breakdowns, `import_total`, `export_total`
-- **Stored in:** `venv2/backend/portwatch_us_data.csv`
+- **Stored in:** `venv2/backend/portwatch_us_data.csv` (local) / `port_data` table in PostgreSQL (production)
 
 ### 3.2 IMF PortWatch — Global Chokepoint Data
 - **URL:** ArcGIS FeatureServer (`Daily_Chokepoints_Data`)
 - **Coverage:** Major global chokepoints (Suez Canal, Panama Canal, Strait of Hormuz, Malacca Strait, etc.)
 - **Key fields:** `portname`, `date` (Unix ms → converted), `n_total`, vessel type breakdowns, capacity metrics
-- **Stored in:** `venv2/backend/chokepoint_data.csv`
+- **Stored in:** `venv2/backend/chokepoint_data.csv` (local) / `chokepoint_data` table in PostgreSQL (production)
 
 ### 3.3 OpenWeatherMap
 - **Current weather + forecast** for all 118 US ports
@@ -456,8 +457,11 @@ DockWise_AI/
 └── venv2/
     ├── backend/
     │   ├── .env                       ← API keys (local only — use Cloud Run env vars in prod)
+    │   ├── .dockerignore
     │   ├── Dockerfile                 ← Main backend container (port 8004)
     │   ├── Dockerfile.ais             ← AIS backend container (port 8001)
+    │   ├── requirements.txt           ← Main backend Python dependencies
+    │   ├── requirements.ais.txt       ← AIS backend Python dependencies
     │   ├── api.py                     ← FastAPI server (port 8004) + V2 scoring
     │   ├── data_pull.py               ← ArcGIS incremental fetch
     │   ├── data_cleaning.py           ← Data normalisation + scoring (DB or CSV)
@@ -473,6 +477,14 @@ DockWise_AI/
     │   ├── model_comparison.py        ← Walk-forward CV across models
     │   ├── feature_engineering.py     ← Feature engineering utilities
     │   ├── forecast_tracker.py        ← Forecast tracking
+    │   ├── port_profiles.json         ← Static port descriptions for sidebar panel
+    │   ├── port_anchor_thresholds.py  ← Per-port anchor zone radius thresholds
+    │   ├── lag_analysis.py            ← Chokepoint-to-port lag analysis script
+    │   ├── backtest.py                ← V1/V2 backtesting script
+    │   ├── backtest_v3.py             ← V3 backtesting script
+    │   ├── save_predictions.py        ← Saves forecast snapshots for validation
+    │   ├── save_predictions_v2.py     ← V2 forecast snapshot script
+    │   ├── validate_predictions.py    ← Compares saved forecasts vs actuals
     │   ├── portwatch_us_data.csv      ← US port data (local fallback; prod uses DB)
     │   ├── chokepoint_data.csv        ← Chokepoint data (local fallback; prod uses DB)
     │   └── AIS/
@@ -486,8 +498,19 @@ DockWise_AI/
         └── src/
             ├── App.jsx                ← Main app (4 tabs, sidebar, all components)
             ├── VesselMap.jsx          ← Live vessel map (Leaflet + AIS SSE)
-            ├── hooks/useApi.js        ← API hooks (reads REACT_APP_API_URL at build time)
-            └── index.js              ← Entry point
+            ├── index.css              ← CSS custom properties + theme tokens (light/dark)
+            ├── index.js               ← React entry point
+            ├── hooks/
+            │   ├── useApi.js          ← API hooks (reads REACT_APP_API_URL at build time)
+            │   └── useTheme.js        ← Light/dark theme toggle + localStorage persistence
+            ├── utils/
+            │   └── geo.js             ← Haversine distance helper for rerouting analysis
+            └── components/
+                └── advisor/
+                    ├── Briefing.jsx         ← Auto-generated daily insight cards
+                    ├── PortComparison.jsx   ← Radar chart comparison for 2-3 ports
+                    ├── ScenarioSimulator.jsx← Scenario impact analysis panel
+                    └── NearbyPortOutlook.jsx← Nearby port congestion outlook
 ```
 
 ---
@@ -516,7 +539,7 @@ ALLOWED_ORIGINS=https://dockwise-frontend-322700197744.us-central1.run.app
 
 ---
 
-## 15. How to Run
+## 15. How to Run — Local Development
 
 ### Step 1 — Start backend API (port 8004):
 ```bash
@@ -551,7 +574,7 @@ python data_pull.py
 
 ---
 
-## 15b. Cloud Run Deployment
+## 16. Cloud Run Deployment
 
 ### Prerequisites
 - GCP project with Cloud Build, Cloud Run, and Artifact Registry enabled
@@ -583,20 +606,15 @@ ALLOWED_ORIGINS="https://dockwise-frontend-322700197744.us-central1.run.app"
 
 ---
 
-## 16. Known Issues & Workarounds
+## 17. Known Limitations
 
-| Issue | Cause | Fix |
-|-------|-------|-----|
-| Port 8004 stuck | Multiple Python processes | Kill all python processes, restart |
-| Congestion scores all 50 | Backend not running or data not loaded | Start backend, wait for V2 scoring |
-| Supply Chain Risk empty | Malformed row in chokepoint CSV | Fixed with `on_bad_lines="skip"` |
-| AIS shows 0 vessels for inland ports | AIS feed doesn't reach river ports | Vessel agent falls back to historical data |
-| PortWatch data 4-11 days old | Intrinsic source lag + weekly Tuesday updates | Run `data_pull.py` weekly; UI shows data date |
-| V2 scoring slow on first request | Prophet fits for 118 ports | One-time cost, cached after first run |
-| Low-volume port false HIGH scores | 1 vessel at near-zero baseline | std floor of 2.0 prevents z-score spikes |
-| No ports shown on Cloud Run frontend | `REACT_APP_API_URL` baked in as placeholder at build time | Update `cloudbuild.frontend.yaml` substitutions with real backend URLs and retrigger build |
-| CORS errors in browser console | `ALLOWED_ORIGINS` not set on backend Cloud Run services | Set `ALLOWED_ORIGINS` env var to frontend Cloud Run URL (no trailing slash) on both backend services |
-| `top-ports` / `top-loaded-ports` slow on Cloud Run | Prophet fits 118 ports on first request; Cloud Run cold start adds latency | Results are cached after first call; subsequent requests are fast |
+| Limitation | Cause | Notes |
+|-----------|-------|-------|
+| PortWatch data 4–11 days old | Intrinsic source lag + weekly Tuesday updates | UI shows data freshness indicator; run `data_pull.py` weekly |
+| AIS shows 0 vessels for inland ports | AIS reception doesn't reach river/lake ports | Vessel agent falls back to PortWatch historical data |
+| V2 scoring slow on first request | Prophet fits models for all 118 ports at startup | One-time cost per deployment; results cached for the session |
+| Low-volume port scores spike on single vessel | Near-zero baseline amplifies z-score | `std_est` floor of 2.0 caps the effect |
+| Congestion reflects 4–11 day old data | PortWatch update lag | Weather and AIS signals are real-time; congestion is lagged |
 
 ---
 
