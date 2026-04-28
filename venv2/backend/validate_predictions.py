@@ -84,7 +84,17 @@ def main():
 
     for port in predictions["port"].unique():
         port_preds = predictions[predictions["port"] == port]
-        daily = get_port_daily_series(df, port)
+        # Skip ports not in fresh data
+        if port not in df["portname"].unique():
+            logger.warning(f"  {port}: not in fresh data, skipping")
+            ports_without_data += 1
+            continue
+        try:
+            daily = get_port_daily_series(df, port)
+        except Exception as e:
+            logger.warning(f"  {port}: failed to build daily series ({e}), skipping")
+            ports_without_data += 1
+            continue
 
         if daily.empty:
             logger.warning(f"  {port}: no data in fresh CSV, skipping")
