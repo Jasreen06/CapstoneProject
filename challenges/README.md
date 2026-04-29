@@ -1,4 +1,4 @@
-# Challenges — Pramod Branch
+# Challenges
 
 Technical challenges encountered during development, their root causes, and how they were resolved.
 
