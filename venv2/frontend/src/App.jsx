@@ -170,7 +170,7 @@ function Label({ children, style = {} }) {
 }
 
 function ModelBadge({ model, recommended }) {
-  const colors = { Prophet:"#3B82F6", ARIMA:"#F59E0B", XGBoost:"#10B981" };
+  const colors = { Prophet:"#3B82F6", ARIMA:"#F59E0B", XGBoost:"#10B981", Ensemble:"#0A9B80" };
   const c = colors[model] || T.teal;
   return (
     <span style={{
@@ -1656,7 +1656,7 @@ function RiskAssessmentCard({ port }) {
 ───────────────────────────────────────────────────────── */
 export default function App() {
   const [port,  setPort]  = useState("");
-  const [model, setModel] = useState("Prophet");
+  const [model, setModel] = useState("Ensemble");
   const [tab,   setTab]   = useState("ports"); // "ports" | "vessels" | "advisor"
   const { isDark, toggle: toggleTheme } = useTheme();
 
@@ -1723,7 +1723,7 @@ export default function App() {
               <div style={{ padding:"0.75rem 0.9rem", borderBottom:`1px solid ${T.border}`, flexShrink:0 }}>
                 <Label style={{ marginBottom:7 }}>Forecast Model</Label>
                 <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
-                  {["Prophet", "ARIMA", "XGBoost"].map(m => (
+                  {["Ensemble", "Prophet", "ARIMA", "XGBoost"].map(m => (
                     <button key={m} onClick={() => setModel(m)} style={{
                       display:"flex", alignItems:"center", justifyContent:"space-between",
                       padding:"0.3rem 0.6rem", borderRadius:6, border:"none", cursor:"pointer",
@@ -1733,7 +1733,10 @@ export default function App() {
                       textAlign:"left", transition:"all 0.15s",
                     }}>
                       {m}
-                      {recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>}
+                      {m === "Ensemble"
+                        ? <span style={{ fontSize:9, color: T.teal }}>★ V2</span>
+                        : recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>
+                      }
                     </button>
                   ))}
                 </div>

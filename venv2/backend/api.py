@@ -34,6 +34,7 @@ load_dotenv()
 from data_cleaning import (load_and_clean, get_port_daily_series,
                             load_and_clean_chokepoints, get_chokepoint_daily_series)
 from forecasting import ALL_MODELS, get_model
+ALL_MODELS_WITH_ENSEMBLE = ALL_MODELS + ["Ensemble"]
 from metrics import evaluate_forecast
 from weather import fetch_current_weather, fetch_weather_forecast
 from llm import (chat as llm_chat, generate_followups as llm_followups,
@@ -793,12 +794,12 @@ def coverage_snapshot():
 @app.get("/api/forecast")
 def forecast(
     port:  str = Query(...),
-    model: str = Query("Prophet", description="ARIMA | Prophet | XGBoost"),
+    model: str = Query("Ensemble", description="ARIMA | Prophet | XGBoost | Ensemble"),
     horizon: int = Query(7, ge=1, le=30),
 ):
     """Run the requested model and return a 7-day (or custom horizon) forecast."""
-    if model not in ALL_MODELS:
-        raise HTTPException(400, f"model must be one of {ALL_MODELS}")
+    if model not in ALL_MODELS_WITH_ENSEMBLE:
+        raise HTTPException(400, f"model must be one of {ALL_MODELS_WITH_ENSEMBLE}")
 
     # Return cached result if available (cache key: port+model+horizon)
     cache_key = f"forecast:{port}:{model}:{horizon}"
@@ -810,9 +811,9 @@ def forecast(
     if daily.empty:
         raise HTTPException(404, f"Port '{port}' not found.")
 
-    # ── Build chokepoint leading-indicator features for XGBoost ──────────
+    # ── Chokepoint features for XGBoost / Ensemble ────────────────────────
     chokepoint_data = None
-    if model == "XGBoost":
+    if model in ("XGBoost", "Ensemble"):
         try:
             chk_df = get_chokepoint_df()
             chokepoint_data = {
@@ -821,33 +822,92 @@ def forecast(
                 if name in chk_df["portname"].values
             }
         except Exception:
-            chokepoint_data = None  # degrade gracefully if chokepoint data unavailable
+            chokepoint_data = None
 
     t0 = time.time()
     try:
-        m = get_model(model)
-        if model == "XGBoost" and chokepoint_data:
-            m.fit(daily, chokepoint_data=chokepoint_data)
+        if model == "Ensemble":
+            # Prophet + XGBoost 60/40 blend — same as V2 scoring
+            m_prophet = get_model("Prophet")
+            m_prophet.fit(daily)
+            fcst_prophet = m_prophet.predict(horizon=horizon)
+
+            m_xgb = get_model("XGBoost")
+            if chokepoint_data:
+                m_xgb.fit(daily, chokepoint_data=chokepoint_data)
+            else:
+                m_xgb.fit(daily)
+            fcst_xgb = m_xgb.predict(horizon=horizon)
+
+            fcst = fcst_prophet.copy()
+            fcst["yhat"]       = 0.6 * fcst_prophet["yhat"].values       + 0.4 * fcst_xgb["yhat"].values
+            fcst["yhat_lower"] = 0.6 * fcst_prophet["yhat_lower"].values  + 0.4 * fcst_xgb["yhat_lower"].values
+            fcst["yhat_upper"] = 0.6 * fcst_prophet["yhat_upper"].values  + 0.4 * fcst_xgb["yhat_upper"].values
+            fcst["yhat"]       = fcst["yhat"].clip(lower=0)
         else:
-            m.fit(daily)
-        fcst = m.predict(horizon=horizon)
+            m = get_model(model)
+            if model == "XGBoost" and chokepoint_data:
+                m.fit(daily, chokepoint_data=chokepoint_data)
+            else:
+                m.fit(daily)
+            fcst = m.predict(horizon=horizon)
     except Exception as e:
         raise HTTPException(500, str(e))
 
     elapsed = time.time() - t0
 
     # ── Forecasted congestion scores ─────────────────────────────────────
-    # Anchor on the 90-day rolling baseline from history
     hist_vals = daily["portcalls"].values.astype(float)
-    baseline  = hist_vals[-90:] if len(hist_vals) >= 90 else hist_vals
-    mean_90   = float(baseline.mean())
-    std_90    = float(baseline.std()) if len(baseline) > 1 else 0.0
 
-    cong_scores, cong_levels = [], []
-    for yhat_val in fcst["yhat"].values:
-        s, lv = _portcalls_to_congestion(max(float(yhat_val), 0.0), mean_90, std_90)
-        cong_scores.append(s)
-        cong_levels.append(lv)
+    if model == "Ensemble" and len(hist_vals) >= 90:
+        # Use V2 residual std for ensemble — same method as the score gauge
+        try:
+            from prophet import Prophet as _Prophet
+            n = len(hist_vals)
+            split = int(n * 0.8)
+            if split >= 90:
+                tr = daily.iloc[:split][["date", "portcalls"]].rename(columns={"date": "ds", "portcalls": "y"})
+                tr["y"] = pd.to_numeric(tr["y"], errors="coerce").fillna(0).clip(lower=0)
+                md = "multiplicative" if tr["y"].min() > 0 else "additive"
+                if md == "multiplicative":
+                    tr["y"] = tr["y"].replace(0, 1e-6)
+                m2 = _Prophet(yearly_seasonality=True, weekly_seasonality=True,
+                              daily_seasonality=False, seasonality_mode=md,
+                              changepoint_prior_scale=0.05, uncertainty_samples=0)
+                m2.fit(tr)
+                val_pred = m2.predict(pd.DataFrame({"ds": daily.iloc[split:]["date"].values}))
+                residuals = hist_vals[split:] - np.maximum(val_pred["yhat"].values, 0)
+                std_est = max(float(np.std(residuals)), 2.0)
+            else:
+                std_est = max(float(np.std(hist_vals[-90:])), 2.0)
+        except Exception:
+            std_est = max(float(np.std(hist_vals[-90:])), 2.0)
+
+        # 3-day momentum
+        if len(hist_vals) >= 4:
+            momentum = float(np.mean(np.diff(hist_vals[-4:])))
+        else:
+            momentum = 0.0
+
+        cong_scores, cong_levels = [], []
+        for yhat_val in fcst["yhat"].values:
+            adjusted = max(float(yhat_val) + momentum, 0)
+            mean_base = float(np.mean(hist_vals[-90:]))
+            z = float(np.clip((adjusted - mean_base) / std_est, -3, 3))
+            s = round((z + 3) / 6 * 100, 1)
+            lv = "HIGH" if s >= 67 else ("MEDIUM" if s >= 33 else "LOW")
+            cong_scores.append(s)
+            cong_levels.append(lv)
+    else:
+        # Rolling z-score for individual models
+        baseline = hist_vals[-90:] if len(hist_vals) >= 90 else hist_vals
+        mean_90  = float(baseline.mean())
+        std_90   = float(baseline.std()) if len(baseline) > 1 else 0.0
+        cong_scores, cong_levels = [], []
+        for yhat_val in fcst["yhat"].values:
+            s, lv = _portcalls_to_congestion(max(float(yhat_val), 0.0), mean_90, std_90)
+            cong_scores.append(s)
+            cong_levels.append(lv)
 
     fcst = fcst.copy()
     fcst["congestion_score"] = cong_scores
