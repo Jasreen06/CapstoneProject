@@ -8,7 +8,7 @@ The first approach applied a `className="pulse-ring"` to a react-leaflet `<Circl
 
 Two problems:
 1. **react-leaflet's `Circle` doesn't reliably pass `className` to the underlying SVG path.** The Leaflet Circle creates an SVG `<path>` element, but react-leaflet's prop-to-DOM mapping doesn't always apply custom class names to the rendered SVG element.
-2. **Stroke-width animation doesn't create a visually expanding ring.** Animating `stroke-width` on an SVG path makes the border thicker, but the circle doesn't visually grow outward — it just gets a fatter border in place.
+2. **Stroke-width animation doesn't create a visually expanding ring.** Animating `stroke-width` on an SVG path makes the border thicker, but the circle doesn't visually grow outward, it just gets a fatter border in place.
 
 ## Resolution
 Replaced the CSS-on-SVG approach with a `Marker` + `L.divIcon` that contains HTML `<div>` elements animated with CSS `transform: scale()` and `opacity`:
@@ -41,9 +41,9 @@ const _pulseIcon = L.divIcon({
 ```
 
 ### Why This Works
-- `transform: scale()` on a `<div>` genuinely scales the element outward — creating a visible expanding ring effect
+- `transform: scale()` on a `<div>` genuinely scales the element outward: creating a visible expanding ring effect
 - Only ~5-10 congested ports get pulse markers at any time (negligible DOM overhead vs 4,000 vessel markers)
 - The `Marker` + `divIcon` performance concern that affects vessels doesn't apply here because there are so few pulse markers
 
 ## Files Changed
-- `venv2/frontend/src/VesselMap.jsx` — pulse icon definition and PortLayer rendering logic
+- `venv2/frontend/src/VesselMap.jsx`: pulse icon definition and PortLayer rendering logic

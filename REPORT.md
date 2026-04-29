@@ -1,15 +1,15 @@
-# DockWise AI — Multi-Agent Port Congestion Prediction System
+# DockWise AI: Multi-Agent Port Congestion Prediction System
 ## Capstone Project Report
 
 ---
 
 ## 1. Problem Statement
 
-Global supply chains depend on the efficient flow of goods through maritime ports. Port congestion — when vessel arrivals exceed a port's processing capacity — causes cascading delays, increased costs, and supply chain disruptions. The COVID-19 pandemic exposed how vulnerable these systems are: in 2021, ships waited 2-3 weeks to dock at Los Angeles-Long Beach alone.
+Global supply chains depend on the efficient flow of goods through maritime ports. Port congestion, when vessel arrivals exceed a port's processing capacity, causes cascading delays, increased costs, and supply chain disruptions. The COVID-19 pandemic exposed how vulnerable these systems are: in 2021, ships waited 2-3 weeks to dock at Los Angeles-Long Beach alone.
 
 **The challenge:** There is no unified system that combines historical port traffic patterns, live vessel positions, weather conditions, and upstream chokepoint disruptions to predict port congestion. Existing tools address these signals in isolation.
 
-**Our solution:** DockWise AI is a multi-agent system that fuses four independent data streams — historical port data (IMF PortWatch), live vessel tracking (AIS), weather forecasts (OpenWeatherMap), and global chokepoint monitoring — into a single congestion prediction and risk assessment platform for 118 US ports.
+**Our solution:** DockWise AI is a multi-agent system that fuses four independent data streams, historical port data (IMF PortWatch), live vessel tracking (AIS), weather forecasts (OpenWeatherMap), and global chokepoint monitoring, into a single congestion prediction and risk assessment platform for 118 US ports.
 
 ---
 
@@ -30,7 +30,7 @@ DockWise AI consists of three layers:
 - **AI Advisor:** Context-aware conversational agent powered by Groq LLaMA-3.3-70B
 
 ### 2.3 Presentation Layer
-- **React Dashboard:** Four-tab interface — Port Intelligence, Live Vessels (interactive Leaflet map), Chokepoints, AI Advisor
+- **React Dashboard:** Four-tab interface: Port Intelligence, Live Vessels (interactive Leaflet map), Chokepoints, AI Advisor
 - **Real-time updates:** AIS vessel positions stream via Server-Sent Events (SSE), refreshing every 5 seconds
 
 ---
@@ -39,7 +39,7 @@ DockWise AI consists of three layers:
 
 ### 3.1 The Core Problem
 
-How do you define "congested" for a port? A raw vessel count is meaningless without context — 10 ships at Los Angeles is quiet; 10 ships at Gary, Indiana is unprecedented. The score must be relative to each port's own seasonal baseline.
+How do you define "congested" for a port? A raw vessel count is meaningless without context, 10 ships at Los Angeles is quiet; 10 ships at Gary, Indiana is unprecedented. The score must be relative to each port's own seasonal baseline.
 
 ### 3.2 V1 Approach (Baseline)
 
@@ -58,23 +58,23 @@ score = (z + 3) / 6 * 100
 
 Three improvements were made:
 
-**1. Historical Residual Std** — Instead of using Prophet's prediction intervals, we fit Prophet on 80% of history, predict the remaining 20%, and measure the actual standard deviation of residuals. This gives a realistic measure of how much traffic normally deviates from predictions.
+**1. Historical Residual Std**: Instead of using Prophet's prediction intervals, we fit Prophet on 80% of history, predict the remaining 20%, and measure the actual standard deviation of residuals. This gives a realistic measure of how much traffic normally deviates from predictions.
 
-**2. Prophet + XGBoost Ensemble (60/40)** — Prophet captures seasonality (yearly cycles, weekly patterns). XGBoost captures non-seasonal signals (recent trends, chokepoint-port interactions). The 60/40 blend reduces individual model errors.
+**2. Prophet + XGBoost Ensemble (60/40)**: Prophet captures seasonality (yearly cycles, weekly patterns). XGBoost captures non-seasonal signals (recent trends, chokepoint-port interactions). The 60/40 blend reduces individual model errors.
 
-**3. 3-Day Momentum** — The average daily change over the last 3 days is added to the current value before scoring. This captures short-term trends (e.g., traffic ramping up before a holiday).
+**3. 3-Day Momentum**: The average daily change over the last 3 days is added to the current value before scoring. This captures short-term trends (e.g., traffic ramping up before a holiday).
 
-**Result:** 70% tier accuracy — a 13-point improvement over V1.
+**Result:** 70% tier accuracy, a 13-point improvement over V1.
 
 ### 3.4 V3 Experiment (Over-Engineering)
 
-We tested adding adaptive thresholds, ARIMA as a third ensemble member, and day-of-week adjustments. Accuracy **dropped to 51%** — 19 points below V2.
+We tested adding adaptive thresholds, ARIMA as a third ensemble member, and day-of-week adjustments. Accuracy **dropped to 51%**: 19 points below V2.
 
-**Key finding:** More model complexity does not always improve performance. The V3 additions introduced more noise than signal. This validates the principle of parsimony — the simplest model that captures the dominant patterns (seasonality + recent trends) outperforms more complex alternatives.
+**Key finding:** More model complexity does not always improve performance. The V3 additions introduced more noise than signal. This validates the principle of parsimony, the simplest model that captures the dominant patterns (seasonality + recent trends) outperforms more complex alternatives.
 
 ### 3.5 Low-Volume Port Handling
 
-Small ports (e.g., Gary, Green Bay) have near-zero baselines. A single vessel would cause a z-score spike to 100 (HIGH). We enforce a minimum std floor of 2.0 to prevent this — 1 vessel at a tiny port scores ~57 (MEDIUM) instead of 100.
+Small ports (e.g., Gary, Green Bay) have near-zero baselines. A single vessel would cause a z-score spike to 100 (HIGH). We enforce a minimum std floor of 2.0 to prevent this, 1 vessel at a tiny port scores ~57 (MEDIUM) instead of 100.
 
 ---
 
@@ -111,7 +111,7 @@ Generates a natural-language explanation via Groq LLaMA-3.3-70B incorporating al
 
 ### 4.4 Chokepoint-Port Correlation
 
-We investigated whether chokepoint disruptions statistically predict port congestion using anomaly-based lagged cross-correlation. All correlations were weak (r < 0.15). This validates the multi-agent fusion approach — chokepoint signals are informative as context but not predictive in isolation. The transit lag lookup (real ocean shipping times from chokepoint to US port region) provides the actionable connection.
+We investigated whether chokepoint disruptions statistically predict port congestion using anomaly-based lagged cross-correlation. All correlations were weak (r < 0.15). This validates the multi-agent fusion approach, chokepoint signals are informative as context but not predictive in isolation. The transit lag lookup (real ocean shipping times from chokepoint to US port region) provides the actionable connection.
 
 ---
 
@@ -123,7 +123,7 @@ The dashboard offers four forecasting options selectable by the user:
 
 | Model | Method | Best for |
 |-------|--------|----------|
-| **Ensemble ★** | Prophet + XGBoost 60/40 blend, V2 residual std, momentum | Default — most accurate, methodologically consistent with score gauge |
+| **Ensemble ★** | Prophet + XGBoost 60/40 blend, V2 residual std, momentum | Default, most accurate, methodologically consistent with score gauge |
 | Prophet | Yearly + weekly seasonality, multiplicative mode | Long series with strong seasonal patterns |
 | ARIMA | Auto-differencing + AIC grid search for (p, q) | Short stationary series |
 | XGBoost | 25 features: lags, rolling stats, calendar, chokepoint lags | Non-linear interactions, recent trend shifts |
@@ -142,7 +142,7 @@ z                   = clip((adjusted_pred - baseline) / std_est, -3, 3)
 forecast_score      = (z + 3) / 6 × 100
 ```
 
-Individual models (Prophet, ARIMA, XGBoost) use a simpler rolling 90-day z-score and are provided for exploratory comparison — to help users understand how each model sees the port's trajectory.
+Individual models (Prophet, ARIMA, XGBoost) use a simpler rolling 90-day z-score and are provided for exploratory comparison, to help users understand how each model sees the port's trajectory.
 
 ### 5.3 Chokepoint Leading Indicators (XGBoost / Ensemble)
 
@@ -178,7 +178,7 @@ aisstream.io WebSocket → ais_consumer.py → ais_store.py → ais_api.py → S
 
 - **AIS-coverage filter:** Only ports with reliable AIS reception shown (inland river/lake ports excluded)
 - Color-coded congestion circles (red=HIGH, amber=MEDIUM, green=LOW)
-- Sonar pulse animations on MEDIUM/HIGH ports — speed varies by congestion level
+- Sonar pulse animations on MEDIUM/HIGH ports: speed varies by congestion level
 - Destination fuzzy-matching: 118 port-to-LOCODE synonyms map AIS destination strings to PortWatch ports
 
 ---
@@ -227,13 +227,13 @@ V2 wins or ties on 17 out of 19 ports. Only Tacoma shows V1 performing better (l
 **Key observations:**
 - 77.4% tier accuracy on true out-of-sample data confirms V2 generalizes well beyond backtests
 - Model beats naive "tomorrow = today" persistence baseline by 16%
-- 73.6% directional accuracy — reliable trend-direction signal for logistics decisions
-- HIGH tier precision = 100% (never false alarms), but recall = 16.7% (conservative — misses some HIGH events)
+- 73.6% directional accuracy: reliable trend-direction signal for logistics decisions
+- HIGH tier precision = 100% (never false alarms), but recall = 16.7% (conservative, misses some HIGH events)
 - Cohen's Kappa = 0.145 reflects class imbalance (most days are MEDIUM)
 
 ---
 
-## 8. Supply Chain Risk — Chokepoint Integration
+## 8. Supply Chain Risk: Chokepoint Integration
 
 ### 7.1 Transit Lag Model
 
@@ -248,9 +248,9 @@ Each port-chokepoint pair has a real ocean transit time lookup based on typical 
 
 The UI shows actionable impact notes based on current disruption level:
 
-- **HIGH disruption:** "Disruption detected — expect elevated arrivals in ~X days"
-- **MEDIUM:** "Monitor — potential impact in ~X days if disruption escalates"
-- **LOW:** "Clear — normal transit flow, ~X-day shipping lane"
+- **HIGH disruption:** "Disruption detected: expect elevated arrivals in ~X days"
+- **MEDIUM:** "Monitor: potential impact in ~X days if disruption escalates"
+- **LOW:** "Clear: normal transit flow, ~X-day shipping lane"
 
 This connects the abstract chokepoint data to concrete port-level predictions.
 
@@ -271,7 +271,7 @@ This allows users to ask natural-language questions like "What's causing high co
 ## 10. Technical Challenges
 
 ### 9.1 Data Lag
-PortWatch data has a 4-11 day lag (3-7 day processing + weekly publication). This is the fundamental challenge — the congestion score reflects the past, not today. Live AIS data partially compensates by providing real-time vessel positions.
+PortWatch data has a 4-11 day lag (3-7 day processing + weekly publication). This is the fundamental challenge, the congestion score reflects the past, not today. Live AIS data partially compensates by providing real-time vessel positions.
 
 ### 9.2 AIS Coverage Gaps
 The AIS feed doesn't reach inland/river ports (Mississippi system, Mobile Bay). The vessel agent falls back to historical median data for these ports.
@@ -283,7 +283,7 @@ V3 showed that adding more models and adjustments can hurt performance. The opti
 Ports with near-zero traffic required special handling to prevent false HIGH scores from single vessels. The std floor of 2.0 solves this.
 
 ### 9.5 Startup Performance
-V2 Prophet+XGBoost scoring for 118 ports takes 2-4 minutes at startup. This is a one-time cost — results are cached for the session.
+V2 Prophet+XGBoost scoring for 118 ports takes 2-4 minutes at startup. This is a one-time cost, results are cached for the session.
 
 ---
 
@@ -314,5 +314,5 @@ V2 Prophet+XGBoost scoring for 118 ports takes 2-4 minutes at startup. This is a
 
 ---
 
-*DockWise AI — Multi-Agent Port Congestion Prediction System*
+*DockWise AI, Multi-Agent Port Congestion Prediction System*
 *Capstone Project | April 2026*

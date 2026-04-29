@@ -1,4 +1,4 @@
-# DockWise AI — Technical Report
+# DockWise AI: Technical Report
 ## Dataset Analysis, Feature Engineering, Forecasting Methodology & Risk Scoring
 
 ---
@@ -8,9 +8,9 @@
 1. [Dataset Overview & Structure](#1-dataset-overview--structure)
 2. [Exploratory Data Analysis (EDA)](#2-exploratory-data-analysis-eda)
 3. [Data Cleaning Decisions](#3-data-cleaning-decisions)
-4. [Feature Engineering — Thinking Process](#4-feature-engineering--thinking-process)
-5. [Congestion Risk Scoring — Full Methodology](#5-congestion-risk-scoring--full-methodology)
-6. [Forecasting Models — Build & Rationale](#6-forecasting-models--build--rationale)
+4. [Feature Engineering: Thinking Process](#4-feature-engineering--thinking-process)
+5. [Congestion Risk Scoring: Full Methodology](#5-congestion-risk-scoring--full-methodology)
+6. [Forecasting Models: Build & Rationale](#6-forecasting-models--build--rationale)
 7. [Model Evaluation Strategy](#7-model-evaluation-strategy)
 8. [Chokepoint Disruption Scoring](#8-chokepoint-disruption-scoring)
 9. [Weather Risk Scoring](#9-weather-risk-scoring)
@@ -24,7 +24,7 @@
 
 ### 1.1 Port Dataset (IMF/World Bank PortWatch)
 
-**Source:** ArcGIS FeatureServer — `Daily_Ports_Data`
+**Source:** ArcGIS FeatureServer, `Daily_Ports_Data`
 **Coverage:** 117 US ports, daily granularity, multi-year history
 
 Each row in `portwatch_us_data.csv` represents **one port on one day**:
@@ -46,11 +46,11 @@ Each row in `portwatch_us_data.csv` represents **one port on one day**:
 **Scale of data:**
 - ~117 ports × ~365 days/year × several years ≈ **hundreds of thousands of rows**
 - Ports range from major hubs (LA-Long Beach: 60–100 portcalls/day) to small inland ports (2–5 portcalls/day)
-- Not all ports have complete time series — smaller ports have more gaps
+- Not all ports have complete time series: smaller ports have more gaps
 
 ### 1.2 Chokepoint Dataset (IMF/World Bank PortWatch)
 
-**Source:** ArcGIS FeatureServer — `Daily_Chokepoints_Data`
+**Source:** ArcGIS FeatureServer, `Daily_Chokepoints_Data`
 **Coverage:** Major global maritime chokepoints, daily data from ~2019
 
 **Critical data quirk discovered during pull:** The `date` column arrives as **Unix epoch milliseconds**, not a human-readable string.
@@ -80,7 +80,7 @@ Each row represents **one chokepoint on one day**:
 ### 2.1 What We Observed in the Port Data
 
 **Distribution of portcalls across ports:**
-The data is highly skewed. A handful of mega-ports (LA-Long Beach, Houston, New York/NJ) drive the majority of vessel calls. Smaller ports like Searsport or Davisville have 2–5 calls/day. This immediately told us we **cannot use absolute portcalls numbers** for comparison across ports — a score of "75 vessels/day" means something very different at LA-LB versus Searsport. This drove the decision to use **z-score normalization** (relative scoring against each port's own baseline).
+The data is highly skewed. A handful of mega-ports (LA-Long Beach, Houston, New York/NJ) drive the majority of vessel calls. Smaller ports like Searsport or Davisville have 2–5 calls/day. This immediately told us we **cannot use absolute portcalls numbers** for comparison across ports, a score of "75 vessels/day" means something very different at LA-LB versus Searsport. This drove the decision to use **z-score normalization** (relative scoring against each port's own baseline).
 
 **Temporal patterns observed:**
 - Clear **weekly seasonality**: vessel arrivals consistently lower on weekends/Sundays (reduced port operations)
@@ -88,13 +88,13 @@ The data is highly skewed. A handful of mega-ports (LA-Long Beach, Houston, New 
 - Some ports show strong **monthly seasonality** tied to commodity cycles (grain export seasons, heating oil demand peaks)
 
 **Missing data / zero days:**
-Not every port reports every day. Calendar gaps exist — some ports have missing dates (not zero activity, but absent records). The cleaning step fills these gaps with zeros using `resample("D").sum()` + `reindex(full_date_range, fill_value=0)`. This is important because time-series models need a contiguous daily index.
+Not every port reports every day. Calendar gaps exist, some ports have missing dates (not zero activity, but absent records). The cleaning step fills these gaps with zeros using `resample("D").sum()` + `reindex(full_date_range, fill_value=0)`. This is important because time-series models need a contiguous daily index.
 
 **Negative values:**
-Rare but present — likely data entry errors. Clipped to 0 using `.clip(lower=0)` since negative portcalls are physically impossible.
+Rare but present, likely data entry errors. Clipped to 0 using `.clip(lower=0)` since negative portcalls are physically impossible.
 
 **Duplicate rows:**
-Some (portname, date) pairs appeared more than once — likely from API pagination overlaps or re-submissions. Deduplicated by keeping the first occurrence.
+Some (portname, date) pairs appeared more than once, likely from API pagination overlaps or re-submissions. Deduplicated by keeping the first occurrence.
 
 ### 2.2 What We Observed in the Chokepoint Data
 
@@ -104,7 +104,7 @@ Some (portname, date) pairs appeared more than once — likely from API paginati
 - Strait of Hormuz: ~20–25 tankers/day
 - Bab el-Mandeb: Significant drop-off visible post-late 2023 (Houthi attacks diverted traffic to Cape of Good Hope)
 
-**The 2023–24 Bab el-Mandeb shock is clearly visible in the data:** Transit counts dropped by ~80–90% over a period of weeks — a textbook disruption event that our z-score captures as a very LOW score (traffic well below baseline).
+**The 2023–24 Bab el-Mandeb shock is clearly visible in the data:** Transit counts dropped by ~80–90% over a period of weeks, a textbook disruption event that our z-score captures as a very LOW score (traffic well below baseline).
 
 **Vessel mix insights:**
 - Suez Canal: Heavy container + tanker mix
@@ -141,24 +141,24 @@ Ports: dates arrive as strings (`"2023-05-14"`) → parsed with `pd.to_datetime(
 Chokepoints: dates arrive as Unix milliseconds → converted with `pd.to_datetime(df["date"], unit="ms")` in `data_pull.py` at save time. All subsequent reads treat the column as a normal YYYY-MM-DD string.
 
 ### 3.3 Deduplication Strategy
-Using `drop_duplicates(subset=["portname", "date"])` — keeps first occurrence. The rationale: if the same (port, date) pair appears twice, the first fetch is likely the "official" record. No merging/averaging was done because the volumes should be identical if it's a true duplicate.
+Using `drop_duplicates(subset=["portname", "date"])`, keeps first occurrence. The rationale: if the same (port, date) pair appears twice, the first fetch is likely the "official" record. No merging/averaging was done because the volumes should be identical if it's a true duplicate.
 
 ### 3.4 Zero-Filling vs NaN
 All missing numeric values are filled with 0, not NaN. Reasoning:
 - A missing `portcalls_container` most likely means zero container ships, not "unknown"
 - Time-series models (especially ARIMA/Prophet) cannot handle NaN values mid-series
-- Calendar gaps (missing dates) are also filled with 0 — absence from the data = no vessel activity reported
+- Calendar gaps (missing dates) are also filled with 0: absence from the data = no vessel activity reported
 
 ### 3.5 Why We Clip Negatives
 Physical constraint: you cannot have negative vessel arrivals. Any negative value is a data artefact. `.clip(lower=0)` is applied to all numeric columns during cleaning.
 
 ---
 
-## 4. Feature Engineering — Thinking Process
+## 4. Feature Engineering: Thinking Process
 
 Feature engineering (`feature_engineering.py`) builds a rich representation of each day's state for the ML model. The thinking follows the question: **"What does a port operations expert look at to understand congestion?"**
 
-### 4.1 Calendar Features — Why They Matter
+### 4.1 Calendar Features: Why They Matter
 
 ```python
 day_of_week, month, week_of_year, is_weekend, quarter, year
@@ -172,21 +172,21 @@ day_of_week, month, week_of_year, is_weekend, quarter, year
 
 Without these features, a model trained on average data would systematically over-predict Sunday and under-predict Monday.
 
-### 4.2 Lag Features — The Core Signal
+### 4.2 Lag Features: The Core Signal
 
 ```python
 portcalls_lag1, portcalls_lag7, portcalls_lag14, portcalls_lag28
 ```
 
 **Reasoning:**
-- **Lag 1 (yesterday):** Short-term autocorrelation — if a port was busy yesterday, it's likely busy today
-- **Lag 7 (same day last week):** Weekly seasonality signal — removes the weekday/weekend effect without explicitly encoding it
+- **Lag 1 (yesterday):** Short-term autocorrelation: if a port was busy yesterday, it's likely busy today
+- **Lag 7 (same day last week):** Weekly seasonality signal: removes the weekday/weekend effect without explicitly encoding it
 - **Lag 14 (two weeks ago):** Medium-term trend; important for catching sustained congestion episodes
 - **Lag 28 (four weeks ago):** Monthly cycle; captures demand patterns tied to shipping schedules (most liner services run on roughly 28-day rotations)
 
-The choice of these specific lags was deliberate — they correspond to natural shipping rhythms, not arbitrary round numbers.
+The choice of these specific lags was deliberate, they correspond to natural shipping rhythms, not arbitrary round numbers.
 
-### 4.3 Rolling Window Features — Smoothed Trend
+### 4.3 Rolling Window Features: Smoothed Trend
 
 ```python
 portcalls_roll7, portcalls_roll14, portcalls_roll30        # rolling means
@@ -195,11 +195,11 @@ portcalls_roll7_slope, portcalls_roll30_slope              # momentum
 ```
 
 **Reasoning:**
-- **Rolling means** denoise the series — daily portcall counts have random noise (weather, ship scheduling). A 7-day mean gives a cleaner signal of the underlying trend.
+- **Rolling means** denoise the series: daily portcall counts have random noise (weather, ship scheduling). A 7-day mean gives a cleaner signal of the underlying trend.
 - **Rolling standard deviation** captures volatility. A port with consistently high variability (std) behaves differently from one with stable, predictable flows. The model needs this to calibrate confidence.
 - **Rolling slope** is a momentum feature. Computed as `(last_value - first_value) / window`. A positive slope = accelerating congestion; negative = easing. This is a synthetic "momentum" signal that helps the model anticipate turning points.
 
-### 4.4 Flow Features — Trade Balance Signal
+### 4.4 Flow Features: Trade Balance Signal
 
 ```python
 net_flow = import_total - export_total
@@ -210,7 +210,7 @@ import_roll7, export_roll7
 **Reasoning:**
 Ports with high net imports (imports >> exports) behave differently from balanced ports. Import-heavy ports generate outbound empty container moves, which add to port congestion without adding cargo value. This ratio contextualizes vessel activity. A West Coast port importing consumer goods from Asia has a very different operational profile than a Gulf Coast port exporting grain.
 
-### 4.5 Vessel Mix Features — Operational Complexity
+### 4.5 Vessel Mix Features: Operational Complexity
 
 ```python
 container_share, tanker_share, dry_bulk_share, general_cargo_share, roro_share
@@ -231,11 +231,11 @@ A day with 90% tanker calls looks operationally different from 90% container cal
 congestion_score (0–100), congestion_z (raw z-score)
 ```
 
-Including the congestion score itself as an input feature for the ML model is intentional. It gives the model the **relative position of today's traffic vs its own history** — the exact same signal that human analysts use. The raw z-score (`congestion_z`) is retained for models that can exploit the unbounded continuous version.
+Including the congestion score itself as an input feature for the ML model is intentional. It gives the model the **relative position of today's traffic vs its own history**: the exact same signal that human analysts use. The raw z-score (`congestion_z`) is retained for models that can exploit the unbounded continuous version.
 
 ---
 
-## 5. Congestion Risk Scoring — Full Methodology
+## 5. Congestion Risk Scoring: Full Methodology
 
 ### 5.1 Why Z-Score Normalization?
 
@@ -243,7 +243,7 @@ The fundamental problem: ports vary enormously in absolute size. A score of 75 p
 - LA-Long Beach: perfectly normal (below average)
 - Searsport, ME: extreme congestion (5× its daily average)
 
-Absolute numbers cannot be compared. We need a **relative measure** — "how does today compare to this port's own history?"
+Absolute numbers cannot be compared. We need a **relative measure**: "how does today compare to this port's own history?"
 
 The z-score provides exactly this:
 
@@ -259,10 +259,10 @@ Several alternatives were considered:
 
 | Window | Problem |
 |--------|---------|
-| 7-day | Too short — the baseline itself moves rapidly, making the score unstable |
+| 7-day | Too short, the baseline itself moves rapidly, making the score unstable |
 | 30-day | Captures monthly patterns but is overly sensitive to outlier weeks |
-| 90-day | Covers one full seasonal quarter — stable enough to anchor scores |
-| 365-day | Too long — slow to adapt to structural changes (new terminal opening, port dredging) |
+| 90-day | Covers one full seasonal quarter, stable enough to anchor scores |
+| 365-day | Too long, slow to adapt to structural changes (new terminal opening, port dredging) |
 
 90 days was chosen as the best balance between **stability** (not chasing noise) and **responsiveness** (adapting to medium-term structural changes). It also captures roughly one quarter of the business year, which is the planning horizon for most logistics operations.
 
@@ -286,9 +286,9 @@ score = (z + 3) / 6 * 100
 ```
 
 The z-score range [-3, +3] is linearly mapped to [0, 100]:
-- z = -3 → score = 0 (minimum possible — far below normal)
+- z = -3 → score = 0 (minimum possible: far below normal)
 - z = 0 → score = 50 (exactly at the 90-day mean)
-- z = +3 → score = 100 (maximum — far above normal)
+- z = +3 → score = 100 (maximum: far above normal)
 
 **Why 50 is "normal":** A score of 50 means today's portcalls equals the 90-day mean exactly. This is the intended "normal" operating point.
 
@@ -321,7 +321,7 @@ The threshold of ±2 points (out of 100) was chosen to filter out minor noise. A
 
 ### 5.7 Worked Examples
 
-**Example 1 — HIGH congestion:**
+**Example 1, HIGH congestion:**
 ```
 Today's portcalls = 94 vessels
 90-day rolling mean = 78 vessels
@@ -331,7 +331,7 @@ z     = (94 - 78) / 8 = +2.0
 score = (2.0 + 3) / 6 × 100 = 83.3  → HIGH
 ```
 
-**Example 2 — MEDIUM (below normal):**
+**Example 2, MEDIUM (below normal):**
 ```
 Today's portcalls = 72 vessels
 90-day rolling mean = 78 vessels
@@ -341,7 +341,7 @@ z     = (72 - 78) / 8 = -0.75
 score = (-0.75 + 3) / 6 × 100 = 37.5  → MEDIUM
 ```
 
-**Example 3 — LOW (very quiet day):**
+**Example 3, LOW (very quiet day):**
 ```
 Today's portcalls = 55 vessels
 90-day rolling mean = 78 vessels
@@ -353,7 +353,7 @@ score = (-3 + 3) / 6 × 100 = 0.0  → LOW
 
 ---
 
-## 6. Forecasting Models — Build & Rationale
+## 6. Forecasting Models: Build & Rationale
 
 Three models were implemented to give users a choice and enable comparison. Each has different strengths:
 
@@ -379,7 +379,7 @@ ARIMA(p, d, q) models the series as a function of:
 **Why AIC for model selection?** AIC = 2k - 2ln(L), where k = number of parameters and L = likelihood. It rewards goodness-of-fit while penalizing over-parameterization. Lower AIC = better model.
 
 **Strengths:** Well-understood, fast, interpretable. Works well for ports with simple, near-stationary series.
-**Weaknesses:** Linear — cannot capture non-linear interactions. No explicit seasonality handling. Struggles with ports that have strong weekly patterns.
+**Weaknesses:** Linear, cannot capture non-linear interactions. No explicit seasonality handling. Struggles with ports that have strong weekly patterns.
 
 ### 6.2 Prophet
 
@@ -390,8 +390,8 @@ y(t) = trend(t) + seasonality(t) + holidays(t) + noise
 ```
 
 - **Trend:** Piecewise linear (with changepoints where the growth rate changes)
-- **Yearly seasonality:** Fourier series of order 10 — captures annual shipping cycles
-- **Weekly seasonality:** Fourier series of order 3 — captures weekday patterns
+- **Yearly seasonality:** Fourier series of order 10: captures annual shipping cycles
+- **Weekly seasonality:** Fourier series of order 3: captures weekday patterns
 - **Uncertainty:** Simulated via `uncertainty_samples=200` (Monte Carlo forecasts)
 
 **Multiplicative vs additive mode:**
@@ -460,7 +460,7 @@ Fold 3: Train [0..378]    Test [379..385]
 ```
 
 **Why walk-forward (not random k-fold)?**
-Time series data has temporal ordering. Using future data to predict the past is **data leakage**. Walk-forward ensures the model is always trained on past data and evaluated on genuinely unseen future data — exactly how it would be used in production.
+Time series data has temporal ordering. Using future data to predict the past is **data leakage**. Walk-forward ensures the model is always trained on past data and evaluated on genuinely unseen future data, exactly how it would be used in production.
 
 ### 7.3 Metrics Used
 
@@ -468,8 +468,8 @@ Time series data has temporal ordering. Using future data to predict the past is
 |--------|---------|----------|
 | **MAE** | mean(|y_true - y_pred|) | Interpretable in original units (vessels/day). Robust to outliers. |
 | **RMSE** | sqrt(mean((y_true - y_pred)²)) | Penalizes large errors more heavily. Good for catching systematic bias. |
-| **MAPE** | mean(|error| / |y_true|) × 100% | Percentage error — scale-independent, comparable across ports. Skips zero actuals. |
-| **SMAPE** | mean(|error| / ((|y_true| + |y_pred|)/2)) × 100% | Symmetric MAPE — bounded [0, 200%]. More stable near zero than MAPE. |
+| **MAPE** | mean(|error| / |y_true|) × 100% | Percentage error, scale-independent, comparable across ports. Skips zero actuals. |
+| **SMAPE** | mean(|error| / ((|y_true| + |y_pred|)/2)) × 100% | Symmetric MAPE, bounded [0, 200%]. More stable near zero than MAPE. |
 | **Coverage** | fraction(y_true within [lower, upper]) | Measures whether the confidence intervals are well-calibrated. Target: ~0.95 for 95% CI. |
 | **Interval Width** | mean(upper - lower) | Measures precision of confidence intervals. Narrower = more useful. |
 | **Fit Time (s)** | Wall clock training time | Practical consideration for API response speed. |
@@ -505,7 +505,7 @@ Importantly, a disruption score of 100 (HIGH) can mean either:
 - **Extreme traffic:** More vessels transiting than usual (e.g., bunching after a period of delay)
 - **Extreme scarcity:** Far fewer vessels than usual (e.g., Bab el-Mandeb during Houthi attacks)
 
-Both extremes represent a deviation from normal that signals supply chain risk. The score is not "high = dangerous" — it's "far from normal = risk." Context (is `n_total` itself high or low?) tells you which direction the disruption is.
+Both extremes represent a deviation from normal that signals supply chain risk. The score is not "high = dangerous", it's "far from normal = risk." Context (is `n_total` itself high or low?) tells you which direction the disruption is.
 
 ### 8.3 Trend Detection for Chokepoints
 
@@ -593,7 +593,7 @@ return _parse_3h_to_daily(r.json(), days)
 For each day, groups all 3h readings and takes:
 - `temp_max`: max of all 3h readings
 - `temp_min`: min of all 3h readings
-- `wind_speed_ms`: **max** (not mean) — for risk scoring we care about the worst-case wind, not average
+- `wind_speed_ms`: **max** (not mean): for risk scoring we care about the worst-case wind, not average
 - `rain_mm`: **sum** of all 3h accumulations → daily total
 - Mid-day reading for qualitative description and clouds
 
@@ -605,7 +605,7 @@ For each day, groups all 3h readings and takes:
 
 The core idea behind including chokepoints in XGBoost:
 
-> *If transit volumes at Malacca Strait drop today (due to piracy or congestion), the vessels that would have passed through will arrive at US West Coast ports 14–21 days later — either delayed (fewer arrivals in the short term) or bunched (a surge of arrivals once conditions normalize).*
+> *If transit volumes at Malacca Strait drop today (due to piracy or congestion), the vessels that would have passed through will arrive at US West Coast ports 14–21 days later, either delayed (fewer arrivals in the short term) or bunched (a surge of arrivals once conditions normalize).*
 
 This is the maritime equivalent of a supply chain "bullwhip effect." Chokepoint data at time t provides genuine predictive power for port congestion at time t+14 to t+28.
 
@@ -640,7 +640,7 @@ With 4 chokepoints × 3 lags = **12 chokepoint features**, plus 13 base features
 
 **Total: 25 features per training sample when chokepoint data is available; 13 without.**
 
-If chokepoint data is unavailable (file missing, API error), XGBoost degrades gracefully to 13 features only — this is handled via the `try/except` block in `/api/forecast`.
+If chokepoint data is unavailable (file missing, API error), XGBoost degrades gracefully to 13 features only, this is handled via the `try/except` block in `/api/forecast`.
 
 ---
 
@@ -781,4 +781,4 @@ WEATHER RISK (port operations):
 
 ---
 
-*DockWise AI v1.0 — Technical Report | March 2026*
+*DockWise AI v1.0, Technical Report | March 2026*

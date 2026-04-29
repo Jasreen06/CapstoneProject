@@ -1,4 +1,4 @@
-# DockWise AI — Getting Started Guide
+# DockWise AI: Getting Started Guide
 
 Step-by-step instructions to clone, set up, and run the full DockWise AI application on a new machine.
 
@@ -82,9 +82,9 @@ cd ../..
 
 ## 5. Run the Application
 
-You need **three terminal windows** (or tabs) — one for each service.
+You need **three terminal windows** (or tabs), one for each service.
 
-### Terminal 1 — Main Backend (port 8004)
+### Terminal 1: Main Backend (port 8004)
 
 ```bash
 cd venv2/backend
@@ -102,7 +102,7 @@ INFO:     Started reloader process
 
 > **First run on a new machine:** The backend will automatically detect that the data files (`portwatch_us_data.csv`, `chokepoint_data.csv`) are missing and download them from the IMF PortWatch API. This one-time download takes **2-5 minutes** (~42MB). Subsequent startups skip this step and load instantly.
 
-### Terminal 2 — AIS Backend (port 8001)
+### Terminal 2: AIS Backend (port 8001)
 
 ```bash
 cd venv2/backend
@@ -120,7 +120,7 @@ INFO:     AIS consumer started — connecting to aisstream.io
 
 > This service connects to aisstream.io via WebSocket and streams live vessel positions in US waters. It takes ~30 seconds to start receiving vessel data.
 
-### Terminal 3 — Frontend (port 3000)
+### Terminal 3: Frontend (port 3000)
 
 ```bash
 cd venv2/frontend
@@ -217,11 +217,11 @@ taskkill /PID <pid> /F
 
 ### Backend starts but endpoints return errors
 - Make sure `.env` exists at `venv2/backend/.env` with valid API keys
-- The backend auto-downloads CSV data files on first startup — if this fails (e.g., no internet), you can manually run: `python data_pull.py`
+- The backend auto-downloads CSV data files on first startup: if this fails (e.g., no internet), you can manually run: `python data_pull.py`
 - Check the backend terminal for "Port data pull complete" / "Chokepoint data pull complete" messages on first run
 
 ### All port congestion scores show 50 (MEDIUM)
-- This means the data files haven't been downloaded yet — the backend auto-pulls them on first startup, which takes 2-5 minutes
+- This means the data files haven't been downloaded yet: the backend auto-pulls them on first startup, which takes 2-5 minutes
 - Wait for the backend to finish downloading, then refresh the dashboard
 - If the auto-pull failed, run `python data_pull.py` manually from `venv2/backend/`
 

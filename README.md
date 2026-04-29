@@ -1,4 +1,4 @@
-# DockWise AI — Multi-Agent Port Congestion Prediction System
+# DockWise AI: Multi-Agent Port Congestion Prediction System
 
 > **Full technical report:** [REPORT.md](REPORT.md)
 
@@ -12,12 +12,12 @@ Port congestion causes cascading supply chain delays and billions in costs. No u
 
 DockWise AI fuses four independent data streams through a multi-agent pipeline into a unified congestion prediction and risk assessment platform for **118 US ports**:
 
-- **IMF PortWatch** — 5+ years of daily vessel arrival history per port
-- **Live AIS** — Real-time vessel positions via aisstream.io WebSocket (~1,800+ vessels)
-- **OpenWeatherMap** — Current weather and 5-day forecasts
-- **Groq LLaMA-3.3-70B** — Natural-language risk explanations and AI advisor
+- **IMF PortWatch**: 5+ years of daily vessel arrival history per port
+- **Live AIS**: Real-time vessel positions via aisstream.io WebSocket (~1,800+ vessels)
+- **OpenWeatherMap**: Current weather and 5-day forecasts
+- **Groq LLaMA-3.3-70B**: Natural-language risk explanations and AI advisor
 
-Three specialized agents (Weather, Congestion, Vessel) run in parallel via **LangGraph**, fused by a Risk Orchestrator into a single risk score. The congestion model uses a **V2 Prophet+XGBoost ensemble** achieving **77.4% tier accuracy** on real holdout data. The dashboard offers four forecasting options (Ensemble ★ best, Prophet, ARIMA, XGBoost) — the Ensemble is the default and powers both the congestion score gauge and the 7-day outlook for methodological consistency.
+Three specialized agents (Weather, Congestion, Vessel) run in parallel via **LangGraph**, fused by a Risk Orchestrator into a single risk score. The congestion model uses a **V2 Prophet+XGBoost ensemble** achieving **77.4% tier accuracy** on real holdout data. The dashboard offers four forecasting options (Ensemble ★ best, Prophet, ARIMA, XGBoost), the Ensemble is the default and powers both the congestion score gauge and the 7-day outlook for methodological consistency.
 
 ## Tech Stack
 
@@ -53,7 +53,7 @@ python -m uvicorn AIS.ais_api:app --port 8001
 cd venv2/frontend
 npm install && npm start
 ```
-Open http://localhost:3000 — first load takes ~1 min while V2 scores are computed for all ports.
+Open http://localhost:3000, first load takes ~1 min while V2 scores are computed for all ports.
 
 ---
 
@@ -125,4 +125,4 @@ venv2/
 
 ---
 
-*DockWise AI v2.0 — Capstone Project | April 2026*
+*DockWise AI v2.0, Capstone Project | April 2026*
