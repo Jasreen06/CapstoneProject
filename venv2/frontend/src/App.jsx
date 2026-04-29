@@ -371,38 +371,6 @@ function CongestionHero({ kpi }) {
               {kpi?.last_portcalls != null ? Math.round(kpi.last_portcalls) : "—"}
             </div>
           </div>
-          <div>
-            <div style={{ fontSize:10, color: T.inkDim, marginBottom:2, letterSpacing:"0.06em", textTransform:"uppercase" }}>Data freshness</div>
-            <div style={{ fontSize:13, fontWeight:600,
-              color: lag === 0 ? T.green : lag > 7 ? T.red : lag > 3 ? T.amber : T.inkMid,
-              display:"flex", alignItems:"center", gap:4 }}>
-              <Clock size={12} />
-              {lag === 0 ? "Up to date" : `${lag}d behind real-time`}
-            </div>
-            {liveUnavailable && lag > 7 && (
-              <div style={{ fontSize:10, color: T.inkDim, marginTop:3, fontStyle:"italic" }}>
-                Live AIS unavailable — tier reflects PortWatch only
-              </div>
-            )}
-            {liveCoverage === "sparse" && (
-              <div
-                title="Live AIS shows few vessels near this port. The displayed tier is based on PortWatch arrivals data only."
-                style={{ fontSize:10, color: T.inkMid, marginTop:3, padding:"2px 6px",
-                  background: T.navy3, border: `1px solid ${T.border}`, borderRadius: 4,
-                  display:"inline-block", cursor:"help" }}>
-                Limited live coverage
-              </div>
-            )}
-            {liveCoverage === "dark" && (
-              <div
-                title="No live AIS vessels detected near this port. Common for inland ports outside coastal AIS reception. Tier is based on PortWatch arrivals data only and has not been validated against live conditions."
-                style={{ fontSize:10, color: T.inkMid, marginTop:3, padding:"2px 6px",
-                  background: T.navy3, border: `1px solid ${T.border}`, borderRadius: 4,
-                  display:"inline-block", cursor:"help" }}>
-                Live coverage unavailable
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </Card>
@@ -1733,10 +1701,7 @@ export default function App() {
                       textAlign:"left", transition:"all 0.15s",
                     }}>
                       {m}
-                      {m === "Ensemble"
-                        ? <span style={{ fontSize:9, color: T.teal }}>★ V2</span>
-                        : recommended === m && <span style={{ fontSize:9, color: T.amber }}>★ best</span>
-                      }
+                      {m === "Ensemble" && <span style={{ fontSize:9, color: T.amber }}>★ best</span>}
                     </button>
                   ))}
                 </div>

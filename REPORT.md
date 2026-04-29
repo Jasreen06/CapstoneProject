@@ -115,7 +115,44 @@ We investigated whether chokepoint disruptions statistically predict port conges
 
 ---
 
-## 5. Live Vessel Tracking
+## 5. Forecasting Models
+
+### 5.1 Four-Model Dashboard
+
+The dashboard offers four forecasting options selectable by the user:
+
+| Model | Method | Best for |
+|-------|--------|----------|
+| **Ensemble ★** | Prophet + XGBoost 60/40 blend, V2 residual std, momentum | Default — most accurate, methodologically consistent with score gauge |
+| Prophet | Yearly + weekly seasonality, multiplicative mode | Long series with strong seasonal patterns |
+| ARIMA | Auto-differencing + AIC grid search for (p, q) | Short stationary series |
+| XGBoost | 25 features: lags, rolling stats, calendar, chokepoint lags | Non-linear interactions, recent trend shifts |
+
+### 5.2 Why Ensemble is Default
+
+A key design decision: **the congestion score gauge and the 7-day outlook use the same Ensemble methodology**. This prevents the inconsistency where the score says HIGH but the forecast chart shows MEDIUM because they use different models.
+
+The Ensemble forecast pipeline mirrors the V2 scoring formula exactly:
+```
+predicted_portcalls = 0.6 × Prophet(day) + 0.4 × XGBoost(day)
+std_est             = residual std from 80/20 train-validation split
+momentum            = mean(diff(last 3 days of history))
+adjusted_pred       = predicted_portcalls + momentum
+z                   = clip((adjusted_pred - baseline) / std_est, -3, 3)
+forecast_score      = (z + 3) / 6 × 100
+```
+
+Individual models (Prophet, ARIMA, XGBoost) use a simpler rolling 90-day z-score and are provided for exploratory comparison — to help users understand how each model sees the port's trajectory.
+
+### 5.3 Chokepoint Leading Indicators (XGBoost / Ensemble)
+
+XGBoost and Ensemble include chokepoint signals as features at 14, 21, and 28-day lags:
+- **Suez Canal, Panama Canal, Strait of Hormuz, Malacca Strait**
+- Lagged disruption scores capture upstream supply chain shocks before they appear in portcall counts
+
+---
+
+## 6. Live Vessel Tracking
 
 ### 5.1 AIS Data Pipeline
 
@@ -128,23 +165,25 @@ aisstream.io WebSocket → ais_consumer.py → ais_store.py → ais_api.py → S
 - SSE endpoint pushes full vessel list every 5 seconds to the frontend
 - Vessels are filtered to US-bound (destination matching) or in US waters (bounding box)
 
-### 5.2 Vessel Classification on the Map
+### 6.2 Vessel Classification on the Map
 
-- **Hidden:** Vessels with unknown type AND no destination (no useful information)
-- **Dimmed:** Vessels with a type but no destination (visible at 25% opacity)
-- **Full visibility:** Vessels with a destination
-- **Tooltip shows:** At port (anchored/moored) count vs en-route count per port
+- **Hidden:** Vessels with unknown type AND no destination
+- **Dimmed:** Vessels with type but no destination (25% opacity)
+- **Full visibility:** Vessels with a known destination
+- **Tooltip shows:** Moored count, At anchor count, Incoming count (all from live AIS)
+- **Icons:** SVG shapes per vessel type (diamond=Cargo, triangle=Tanker, square=Passenger, etc.)
+- **Clustering:** Vessels group into teal numbered bubbles at low zoom, uncluster at zoom ≥ 10
 
-### 5.3 Port Visualization
+### 6.3 Port Visualization
 
-- All 118 ports shown with congestion-colored circles (red/amber/green)
-- Sonar pulse animations on all ports — speed and intensity vary by congestion level
-- Permanent name labels for 15 major ports
-- Clickable to zoom in
+- **AIS-coverage filter:** Only ports with reliable AIS reception shown (inland river/lake ports excluded)
+- Color-coded congestion circles (red=HIGH, amber=MEDIUM, green=LOW)
+- Sonar pulse animations on MEDIUM/HIGH ports — speed varies by congestion level
+- Destination fuzzy-matching: 118 port-to-LOCODE synonyms map AIS destination strings to PortWatch ports
 
 ---
 
-## 6. Validation Results
+## 7. Validation Results
 
 ### 6.1 Holdout Backtest
 
@@ -194,7 +233,7 @@ V2 wins or ties on 17 out of 19 ports. Only Tacoma shows V1 performing better (l
 
 ---
 
-## 7. Supply Chain Risk — Chokepoint Integration
+## 8. Supply Chain Risk — Chokepoint Integration
 
 ### 7.1 Transit Lag Model
 
@@ -217,7 +256,7 @@ This connects the abstract chokepoint data to concrete port-level predictions.
 
 ---
 
-## 8. AI Advisor
+## 9. AI Advisor
 
 The AI Advisor uses Groq's LLaMA-3.3-70B model with:
 
@@ -229,7 +268,7 @@ This allows users to ask natural-language questions like "What's causing high co
 
 ---
 
-## 9. Technical Challenges
+## 10. Technical Challenges
 
 ### 9.1 Data Lag
 PortWatch data has a 4-11 day lag (3-7 day processing + weekly publication). This is the fundamental challenge — the congestion score reflects the past, not today. Live AIS data partially compensates by providing real-time vessel positions.
@@ -248,21 +287,24 @@ V2 Prophet+XGBoost scoring for 118 ports takes 2-4 minutes at startup. This is a
 
 ---
 
-## 10. Technologies Used
+## 11. Technologies Used
 
 | Component | Technology |
 |-----------|-----------|
 | Backend API | Python, FastAPI, Uvicorn |
-| Forecasting | Prophet, XGBoost, ARIMA (statsmodels) |
+| Forecasting (Ensemble ★) | Prophet + XGBoost 60/40 blend, V2 residual std + momentum |
+| Forecasting (individual) | Prophet, XGBoost, ARIMA (statsmodels) |
 | Multi-Agent Pipeline | LangGraph |
 | AI Advisor | LangChain, Groq (LLaMA-3.3-70B) |
 | AIS Streaming | WebSocket (aisstream.io), Server-Sent Events |
 | Frontend | React, Leaflet (maps), Recharts |
+| Database | PostgreSQL (Supabase) |
+| Deployment | Docker, Google Cloud Run |
 | Data Source | IMF PortWatch (ArcGIS), OpenWeatherMap, aisstream.io |
 
 ---
 
-## 11. Future Work
+## 12. Future Work
 
 - **AWS deployment** for 24/7 AIS data collection and scheduled data pulls
 - **Prediction intervals** on the forecast chart for uncertainty visualization
